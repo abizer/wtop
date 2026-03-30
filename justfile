@@ -2,35 +2,38 @@ set positional-arguments
 
 default: build
 
-# Build release binary
+# Build both app and helper
 build:
     swift build -c release --disable-sandbox
 
-# Build .app bundle
+# Build debug
+build-debug:
+    swift build
+
+# Build .app bundle with embedded helper
 app: build
     rm -rf wtop.app
-    mkdir -p wtop.app/Contents/{MacOS,Resources}
+    mkdir -p wtop.app/Contents/{MacOS,Helpers,Resources}
     cp .build/release/wtop wtop.app/Contents/MacOS/
+    cp .build/release/wtop-helper wtop.app/Contents/Helpers/
     cp Info.plist wtop.app/Contents/
+    cp Resources/me.abizer.wtop.helper.plist wtop.app/Contents/Resources/
+    codesign --force --sign - wtop.app/Contents/Helpers/wtop-helper
     codesign --force --sign - wtop.app
 
-# Install .app to /Applications
+# Install .app to ~/Applications (user-writable, Spotlight-indexed)
 install: app
-    rm -rf /Applications/wtop.app
-    cp -R wtop.app /Applications/wtop.app
-    chmod -R a+rX /Applications/wtop.app
+    mkdir -p ~/Applications
+    rm -rf ~/Applications/wtop.app
+    cp -R wtop.app ~/Applications/wtop.app
 
 # Uninstall
 uninstall:
-    rm -rf /Applications/wtop.app
+    rm -rf ~/Applications/wtop.app
 
 # Run debug build
 run:
     swift build && .build/debug/wtop
-
-# Run with sudo (full per-process energy data)
-run-sudo:
-    swift build && sudo .build/debug/wtop
 
 # Create release zip for GitHub
 release version:
@@ -43,7 +46,6 @@ release version:
     echo ""
     echo "  git tag v{{version}} && git push --tags"
     echo "  gh release create v{{version}} wtop.app.zip --title 'v{{version}}'"
-    echo "  Update Casks/wtop.rb sha256"
 
 # Clean build artifacts
 clean:

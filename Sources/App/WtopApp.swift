@@ -13,11 +13,9 @@ struct WtopApp: App {
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
-        escalatePrivilegesIfNeeded()
-        // Set dock icon from SF Symbol since we don't have an .icns
         if let img = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "wtop") {
-            let config = NSImage.SymbolConfiguration(pointSize: 128, weight: .medium)
-            NSApp.applicationIconImage = img.withSymbolConfiguration(config)
+            NSApp.applicationIconImage = img.withSymbolConfiguration(
+                .init(pointSize: 128, weight: .medium))
         }
     }
 
@@ -27,28 +25,9 @@ struct WtopApp: App {
     }
 }
 
-/// If not running as root, relaunch via AppleScript `with administrator privileges`.
-/// Shows the native macOS password dialog. If the user cancels, the app continues
-/// unprivileged (system power and user-process data still work).
-private func escalatePrivilegesIfNeeded() {
-    guard getuid() != 0 else { return }  // already root
-
-    let exe = Bundle.main.executablePath ?? ProcessInfo.processInfo.arguments[0]
-    // Fully detach: redirect all I/O so the shell exits immediately after backgrounding
-    let source = "do shell script \"'\(exe)' </dev/null >/dev/null 2>&1 &\" with administrator privileges"
-
-    var error: NSDictionary?
-    NSAppleScript(source: source)?.executeAndReturnError(&error)
-
-    if error == nil {
-        // Privileged instance launched — exit immediately
-        exit(0)
-    }
-    // User cancelled or error — continue unprivileged
-}
-
 struct ContentView: View {
     @State private var monitor = SystemMonitor()
+    @State private var helper = HelperClient()
     @State private var interval: Duration = .seconds(2)
 
     private let intervals: [(String, Duration)] = [
@@ -102,6 +81,8 @@ struct ContentView: View {
 
             Spacer()
 
+            adminButton
+
             Picker("", selection: $interval) {
                 ForEach(intervals, id: \.1) { label, dur in
                     Text(label).tag(dur)
@@ -117,6 +98,30 @@ struct ContentView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private var adminButton: some View {
+        switch helper.status {
+        case .enabled:
+            Label("Admin", systemImage: "lock.open.fill")
+                .font(.caption2)
+                .foregroundStyle(.green)
+        case .notRegistered, .failed:
+            Button(action: { helper.register() }) {
+                Label("Grant Admin", systemImage: "lock.shield")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Install privileged helper for full system process energy data")
+        case .requiresApproval:
+            Button(action: { helper.register() }) {
+                Label("Approve in Settings", systemImage: "gear")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.orange)
+        }
     }
 
     private var dot: some View {

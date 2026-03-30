@@ -9,9 +9,6 @@ let package = Package(
         .executableTarget(
             name: "wtop",
             path: "Sources/App",
-            resources: [
-                .copy("../../Resources/me.abizer.wtop.helper.plist"),
-            ],
             swiftSettings: [.unsafeFlags(["-parse-as-library"])],
             linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("ServiceManagement")]
         ),

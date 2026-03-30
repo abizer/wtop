@@ -33,7 +33,7 @@ install-helper: build
     sudo cp Resources/me.abizer.wtop.helper.plist /Library/LaunchDaemons/
     sudo launchctl bootout system/me.abizer.wtop.helper 2>/dev/null || true
     sudo launchctl bootstrap system /Library/LaunchDaemons/me.abizer.wtop.helper.plist
-    @echo "Helper daemon installed and running as root"
+    @echo "Helper daemon registered (on-demand — starts when wtop.app opens)"
 
 # Uninstall helper daemon
 uninstall-helper:

@@ -2,57 +2,65 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]  # trigger on version tags: git tag v0.2.0 && git push --tags
+    tags: ["v*"]
 
 jobs:
   release:
     runs-on: macos-15
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract version from tag
+      - name: Extract version
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Build
-        run: swift build -c release --disable-sandbox
-
-      - name: Verify binaries
+      - name: Build .app bundle
         run: |
+          swift build -c release --disable-sandbox
           BIN=$(swift build -c release --disable-sandbox --show-bin-path)
-          test -x "$BIN/wtop"
-          test -x "$BIN/wtop-helper"
 
-      - name: Create PR in Homebrew tap
+          rm -rf wtop.app
+          mkdir -p wtop.app/Contents/{MacOS,Helpers,Resources}
+          cp "$BIN/wtop" wtop.app/Contents/MacOS/
+          cp "$BIN/wtop-helper" wtop.app/Contents/Helpers/
+          cp support/install-helper.sh wtop.app/Contents/Helpers/
+          chmod +x wtop.app/Contents/Helpers/install-helper.sh
+          cp Info.plist wtop.app/Contents/
+          cp support/me.abizer.wtop.helper.plist wtop.app/Contents/Resources/
+          codesign --force --sign - wtop.app/Contents/Helpers/wtop-helper
+          codesign --force --sign - wtop.app
+
+      - name: Create zip
+        run: ditto -c -k --keepParent wtop.app wtop.app.zip
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "v${VERSION}" wtop.app.zip \
+            --title "v${VERSION}" \
+            --generate-notes
+
+      - name: Update Homebrew cask
         env:
           TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
           GH_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          SHA=$(shasum -a 256 wtop.app.zip | cut -d' ' -f1)
 
           git clone https://x-access-token:${TAP_TOKEN}@github.com/abizer/homebrew-tap.git tap
           cd tap
-          git checkout -b "wtop-v${VERSION}"
 
-          # Update formula tag
-          sed -i '' "s|tag: \"v[0-9]*\.[0-9]*\.[0-9]*\"|tag: \"v${VERSION}\"|" Formula/wtop.rb
-
-          # Strip existing bottle block (new one built by test-bot)
-          ruby -e '
-            f = File.read("Formula/wtop.rb")
-            f.gsub!(/\n  bottle do.*?end\n/m, "\n")
-            File.write("Formula/wtop.rb", f)
-          ' 2>/dev/null || true
+          # Update version and sha256 in cask
+          sed -i '' "s|version \"[0-9]*\.[0-9]*\.[0-9]*\"|version \"${VERSION}\"|" Casks/wtop.rb
+          sed -i '' "s|sha256 .*|sha256 \"${SHA}\"|" Casks/wtop.rb
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/wtop.rb
+          git add Casks/wtop.rb
           git commit -m "wtop ${VERSION}"
-          git push -u origin "wtop-v${VERSION}"
-
-          gh pr create \
-            --repo abizer/homebrew-tap \
-            --base master \
-            --head "wtop-v${VERSION}" \
-            --title "wtop ${VERSION}" \
-            --body "Automated version bump from [abizer/wtop@v${VERSION}](https://github.com/abizer/wtop/releases/tag/v${VERSION})."
+          git push

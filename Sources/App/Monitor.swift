@@ -159,6 +159,8 @@ final class SystemMonitor {
     private(set) var pCoreCount: Int = 0
     private(set) var totalCores: Int = 0
 
+    var helperClient: HelperClient?
+
     private var task: Task<Void, Never>?
     private var prevCPU: [Int32: UInt64] = [:]
     private var prevEnergy: [Int32: UInt64] = [:]

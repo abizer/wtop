@@ -160,6 +160,7 @@ final class SystemMonitor {
     private(set) var totalCores: Int = 0
 
     var helperClient: HelperClient?
+    private var helperData: [HelperProcessEntry]?
 
     private var task: Task<Void, Never>?
     private var prevCPU: [Int32: UInt64] = [:]
@@ -216,14 +217,19 @@ final class SystemMonitor {
     // MARK: - Sampling
 
     private func sample(dt: Double) {
-        if dt > 0.01 { sampleProcs(dt: dt) }
+        if dt > 0.01 {
+            // Fetch helper data asynchronously (fire and forget — uses last result)
+            if let helper = helperClient, helper.status == .running {
+                Task { helperData = await helper.fetchProcessData() }
+            }
+            sampleProcs(dt: dt)
+        }
         sampleCores()
         samplePower()
         sampleTemps()
         sampleThermal()
         sysInfo.refresh()
 
-        // Track power history
         if power.systemW > 0 {
             powerHistory.append(power.systemW)
             if powerHistory.count > historyMax {
@@ -234,75 +240,54 @@ final class SystemMonitor {
 
     // MARK: - Processes + Energy + Grouping
 
+    /// Unified entry for process data from either local proc_pidinfo or helper
+    private struct RawProc {
+        let pid: Int32; let uid: UInt32; let cpuTotal: UInt64
+        let energyNJ: UInt64; let hasEnergy: Bool
+        let threads: Int; let mem: UInt64; let path: String
+    }
+
     private func sampleProcs(dt: Double) {
-        let pidCount = proc_listallpids(nil, 0)
-        guard pidCount > 0 else { return }
+        // Gather raw process data from helper (all procs) or local (user procs only)
+        let raw: [RawProc]
+        if let hd = helperData {
+            raw = hd.map { e in
+                RawProc(pid: e.pid, uid: e.uid,
+                        cpuTotal: e.cpuUser &+ e.cpuSystem,
+                        energyNJ: e.energyNJ, hasEnergy: e.energyNJ > 0,
+                        threads: Int(e.threads), mem: e.memResident, path: e.path)
+            }
+        } else {
+            raw = gatherLocalProcs()
+        }
 
-        var pids = [Int32](repeating: 0, count: Int(pidCount))
-        let actual = proc_listallpids(&pids, Int32(MemoryLayout<Int32>.size * Int(pidCount)))
-
+        // Compute deltas and build results
         var newCPU: [Int32: UInt64] = [:]
         var newEnergy: [Int32: UInt64] = [:]
-        newCPU.reserveCapacity(Int(actual))
-        newEnergy.reserveCapacity(Int(actual))
         var results: [ProcUsage] = []
 
-        let allInfoSize = Int32(MemoryLayout<proc_taskallinfo>.size)
-        var pathBuf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-
-        for i in 0..<Int(actual) {
-            let pid = pids[i]
-            guard pid > 0 else { continue }
-
-            // Single syscall for both task info and bsd info (includes UID)
-            var allInfo = proc_taskallinfo()
-            guard proc_pidinfo(pid, PROC_PIDTASKALLINFO, 0, &allInfo, allInfoSize) == allInfoSize else {
-                continue
-            }
-            let info = allInfo.ptinfo
-            let uid = allInfo.pbsd.pbi_uid
-
-            let cpuTotal = info.pti_total_user &+ info.pti_total_system
-            newCPU[pid] = cpuTotal
-
-            var ri = rusage_info_v6()
-            let riOk = withUnsafeMutablePointer(to: &ri) { ptr -> Bool in
-                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { buf in
-                    proc_pid_rusage(pid, Int32(RUSAGE_INFO_V6), buf)
-                } == 0
-            }
-            let energyNJ: UInt64 = riOk ? ri.ri_energy_nj : 0
-            newEnergy[pid] = energyNJ
+        for e in raw {
+            newCPU[e.pid] = e.cpuTotal
+            newEnergy[e.pid] = e.energyNJ
 
             var cpuMs = 0.0
-            if let prevC = prevCPU[pid], cpuTotal >= prevC {
-                cpuMs = Double(cpuTotal &- prevC) / 1_000_000.0 / dt
+            if let prevC = prevCPU[e.pid], e.cpuTotal >= prevC {
+                cpuMs = Double(e.cpuTotal &- prevC) / 1_000_000.0 / dt
             }
             var energyW = 0.0
-            if let prevE = prevEnergy[pid], energyNJ >= prevE, energyNJ > 0 {
-                energyW = Double(energyNJ &- prevE) / (dt * 1_000_000_000.0)
+            if let prevE = prevEnergy[e.pid], e.energyNJ >= prevE, e.energyNJ > 0 {
+                energyW = Double(e.energyNJ &- prevE) / (dt * 1_000_000_000.0)
             }
-
             guard cpuMs > 0.05 || energyW > 0.001 else { continue }
 
-            pathBuf.withUnsafeMutableBufferPointer { $0.baseAddress!.initialize(repeating: 0, count: $0.count) }
-            proc_pidpath(pid, &pathBuf, UInt32(MAXPATHLEN))
-            let path = String(cString: pathBuf)
-            let name: String
-            if path.isEmpty {
-                proc_name(pid, &pathBuf, UInt32(MAXPATHLEN))
-                let n = String(cString: pathBuf)
-                name = n.isEmpty ? "pid \(pid)" : n
-            } else {
-                name = (path as NSString).lastPathComponent
-            }
+            let name = e.path.isEmpty ? "pid \(e.pid)" : (e.path as NSString).lastPathComponent
 
             results.append(ProcUsage(
-                id: pid, name: name,
-                appGroup: Self.extractAppName(from: path, fallback: name),
-                isUserApp: uid >= 500,  // macOS user accounts start at UID 500
-                cpuMs: cpuMs, energyW: energyW, hasEnergy: riOk,
-                threads: Int(info.pti_threadnum), mem: info.pti_resident_size
+                id: e.pid, name: name,
+                appGroup: Self.extractAppName(from: e.path, fallback: name),
+                isUserApp: e.uid >= 500,
+                cpuMs: cpuMs, energyW: energyW, hasEnergy: e.hasEnergy,
+                threads: e.threads, mem: e.mem
             ))
         }
 
@@ -329,6 +314,52 @@ final class SystemMonitor {
         }
 
         apps = Array(appCache.values)
+    }
+
+    /// Gather process data locally via proc_pidinfo (only works for user-owned processes)
+    private func gatherLocalProcs() -> [RawProc] {
+        let pidCount = proc_listallpids(nil, 0)
+        guard pidCount > 0 else { return [] }
+        var pids = [Int32](repeating: 0, count: Int(pidCount))
+        let actual = proc_listallpids(&pids, Int32(MemoryLayout<Int32>.size * Int(pidCount)))
+
+        let allInfoSize = Int32(MemoryLayout<proc_taskallinfo>.size)
+        var pathBuf = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        var result: [RawProc] = []
+
+        for i in 0..<Int(actual) {
+            let pid = pids[i]
+            guard pid > 0 else { continue }
+
+            var allInfo = proc_taskallinfo()
+            guard proc_pidinfo(pid, PROC_PIDTASKALLINFO, 0, &allInfo, allInfoSize) == allInfoSize else {
+                continue
+            }
+
+            var ri = rusage_info_v6()
+            let riOk = withUnsafeMutablePointer(to: &ri) { ptr -> Bool in
+                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { buf in
+                    proc_pid_rusage(pid, Int32(RUSAGE_INFO_V6), buf)
+                } == 0
+            }
+
+            pathBuf.withUnsafeMutableBufferPointer { $0.baseAddress!.initialize(repeating: 0, count: $0.count) }
+            proc_pidpath(pid, &pathBuf, UInt32(MAXPATHLEN))
+            var path = String(cString: pathBuf)
+            if path.isEmpty {
+                proc_name(pid, &pathBuf, UInt32(MAXPATHLEN))
+                path = String(cString: pathBuf)
+            }
+
+            result.append(RawProc(
+                pid: pid, uid: allInfo.pbsd.pbi_uid,
+                cpuTotal: allInfo.ptinfo.pti_total_user &+ allInfo.ptinfo.pti_total_system,
+                energyNJ: riOk ? ri.ri_energy_nj : 0, hasEnergy: riOk,
+                threads: Int(allInfo.ptinfo.pti_threadnum),
+                mem: allInfo.ptinfo.pti_resident_size, path: path
+            ))
+        }
+        return result
     }
 
     nonisolated private static func extractAppName(from path: String, fallback: String) -> String {

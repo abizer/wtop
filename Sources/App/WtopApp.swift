@@ -56,7 +56,10 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 400)
-        .onAppear { monitor.start(interval: interval) }
+        .onAppear {
+            monitor.helperClient = helper
+            monitor.start(interval: interval)
+        }
         .onDisappear { monitor.stop() }
     }
 

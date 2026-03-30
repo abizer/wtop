@@ -74,6 +74,8 @@ struct ContentView: View {
                 dot
                 Text("\(monitor.sysInfo.memUsedGB)/\(monitor.sysInfo.memoryGB) GB")
                 dot
+                Text("macOS \(monitor.sysInfo.osVersion)")
+                dot
                 Text("up \(monitor.sysInfo.uptime)")
             }
             .font(.caption2)

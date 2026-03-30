@@ -5,12 +5,33 @@ import AppKit
 struct WtopApp: App {
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
+        escalatePrivilegesIfNeeded()
     }
 
     var body: some Scene {
         WindowGroup { ContentView() }
             .defaultSize(width: 760, height: 880)
     }
+}
+
+/// If not running as root, relaunch via AppleScript `with administrator privileges`.
+/// Shows the native macOS password dialog. If the user cancels, the app continues
+/// unprivileged (system power and user-process data still work).
+private func escalatePrivilegesIfNeeded() {
+    guard getuid() != 0 else { return }  // already root
+
+    let exe = Bundle.main.executablePath ?? ProcessInfo.processInfo.arguments[0]
+    // Fully detach: redirect all I/O so the shell exits immediately after backgrounding
+    let source = "do shell script \"'\(exe)' </dev/null >/dev/null 2>&1 &\" with administrator privileges"
+
+    var error: NSDictionary?
+    NSAppleScript(source: source)?.executeAndReturnError(&error)
+
+    if error == nil {
+        // Privileged instance launched — exit immediately
+        exit(0)
+    }
+    // User cancelled or error — continue unprivileged
 }
 
 struct ContentView: View {

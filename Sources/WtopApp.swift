@@ -1,11 +1,24 @@
 import SwiftUI
 import AppKit
 
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+}
+
 @main
 struct WtopApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
         escalatePrivilegesIfNeeded()
+        // Set dock icon from SF Symbol since we don't have an .icns
+        if let img = NSImage(systemSymbolName: "bolt.fill", accessibilityDescription: "wtop") {
+            let config = NSImage.SymbolConfiguration(pointSize: 128, weight: .medium)
+            NSApp.applicationIconImage = img.withSymbolConfiguration(config)
+        }
     }
 
     var body: some Scene {

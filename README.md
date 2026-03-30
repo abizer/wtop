@@ -1,10 +1,20 @@
 # wtop
 
-Real-time power monitor for Apple Silicon Macs. Native SwiftUI app that shows exactly where your watts are going — from the SoC components down to individual apps.
-
 _written by [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6) via Claude Code_
 
+Inspired by [Simon Willison's](https://github.com/simonw) [_Vibe coding SwiftUI apps is a lot of fun_](https://simonwillison.net/2026/Mar/27/vibe-coding-swiftui/)
+
+Real-time power monitor for Apple Silicon Macs. Native SwiftUI app that shows exactly where your watts are going — from the SoC components down to individual apps.
+
 ![wtop screenshot](https://github.com/abizer/wtop/raw/master/screenshot.png)
+
+## Install
+
+### Homebrew (recommended)
+
+```bash
+brew install abizer/tap/wtop
+```
 
 ## Features
 
@@ -17,35 +27,6 @@ _written by [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6) vi
 - **Power history** — 5-minute sparkline of system power
 - **Thermal state** — nominal/fair/serious/critical indicator
 - **Battery projection** — estimated time remaining at current draw
-
-## Install
-
-### Homebrew (recommended)
-
-```bash
-brew install abizer/tap/wtop
-```
-
-This builds from source, installs the app to `~/Applications` (Spotlight-searchable), and sets up a privileged helper daemon for full system process energy data.
-
-### From source
-
-```bash
-git clone https://github.com/abizer/wtop
-cd wtop
-just install          # .app → ~/Applications
-just install-helper   # privileged daemon (needs sudo)
-```
-
-Requires Swift 5.9+ and macOS 14+.
-
-## Usage
-
-Launch **wtop** from Spotlight, Raycast, or the terminal:
-
-```bash
-wtop
-```
 
 The app works without the privileged helper — system power, CPU/GPU/ANE/DRAM breakdown, core utilization, temperatures, and user-app energy are all available. The helper adds energy data for system daemons (WindowServer, kernel_task, etc.).
 
@@ -69,6 +50,19 @@ wtop reads from five macOS subsystems, none of which require third-party depende
 | Temperatures | SMC keys via IOKit (`sp78` fixed-point) |
 
 The privileged helper runs **on-demand** — launchd starts it when the app opens an XPC connection, and it exits 30 seconds after the app closes. It never runs in the background.
+
+### Install from source
+
+This builds from source, installs the app to `~/Applications` (Spotlight-searchable), and sets up a privileged helper daemon for full system process energy data.
+
+```bash
+git clone https://github.com/abizer/wtop
+cd wtop
+just install          # .app → ~/Applications
+just install-helper   # privileged daemon (needs sudo)
+```
+
+Requires Swift 5.9+ and macOS 14+.
 
 ## Uninstall
 

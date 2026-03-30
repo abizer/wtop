@@ -62,8 +62,14 @@ class Wtop < Formula
         GUI:  Search "wtop" in Spotlight/Raycast
 
       A privileged helper runs on-demand (only while wtop is open)
-      to provide full system process energy data. It exits automatically
-      30 seconds after the app closes.
+      to provide system process energy data. It auto-exits 30s after
+      the app closes.
+
+      To fully uninstall (remove the helper daemon):
+        sudo launchctl bootout system/me.abizer.wtop.helper
+        sudo rm -f /Library/PrivilegedHelperTools/me.abizer.wtop.helper
+        sudo rm -f /Library/LaunchDaemons/me.abizer.wtop.helper.plist
+        rm -f ~/Applications/wtop.app
     EOS
   end
 

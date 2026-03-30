@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+    paths: [VERSION]  # only triggers when VERSION file changes
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag exists
+        id: check
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        if: steps.check.outputs.exists == 'false'
+        run: swift build -c release --disable-sandbox
+
+      - name: Test
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          test -x .build/release/wtop
+          test -x .build/release/wtop-helper
+
+      - name: Create tag
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Update Homebrew tap
+        if: steps.check.outputs.exists == 'false'
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          git clone https://x-access-token:${TAP_TOKEN}@github.com/abizer/homebrew-tap.git tap
+          cd tap
+          sed -i '' "s|tag: \"v[0-9]*\.[0-9]*\.[0-9]*\"|tag: \"v${VERSION}\"|" Formula/wtop.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/wtop.rb
+          git commit -m "wtop v${VERSION}"
+          git push

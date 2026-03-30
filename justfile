@@ -6,7 +6,7 @@ default: build
 
 # Build both app and helper
 build:
-    swift build -c release
+    swift build -c release --disable-sandbox
 
 # Build debug
 build-debug:

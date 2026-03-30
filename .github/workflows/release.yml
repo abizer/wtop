@@ -2,63 +2,42 @@ name: Release
 
 on:
   push:
-    branches: [master]
-    paths: [VERSION]
+    tags: ["v*"]  # trigger on version tags: git tag v0.2.0 && git push --tags
 
 jobs:
   release:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # need full history for tagging
 
-      - name: Read version
+      - name: Extract version from tag
         id: version
-        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
-
-      - name: Check if tag exists
-        id: check
-        run: |
-          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
       - name: Build
-        if: steps.check.outputs.exists == 'false'
         run: swift build -c release --disable-sandbox
 
       - name: Verify binaries
-        if: steps.check.outputs.exists == 'false'
         run: |
           BIN=$(swift build -c release --disable-sandbox --show-bin-path)
           test -x "$BIN/wtop"
           test -x "$BIN/wtop-helper"
 
-      - name: Create tag
-        if: steps.check.outputs.exists == 'false'
-        run: |
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
-
       - name: Create PR in Homebrew tap
-        if: steps.check.outputs.exists == 'false'
         env:
           TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
 
-          # Clone tap and create a branch
           git clone https://x-access-token:${TAP_TOKEN}@github.com/abizer/homebrew-tap.git tap
           cd tap
           git checkout -b "wtop-v${VERSION}"
 
-          # Update the formula tag
+          # Update formula tag
           sed -i '' "s|tag: \"v[0-9]*\.[0-9]*\.[0-9]*\"|tag: \"v${VERSION}\"|" Formula/wtop.rb
 
-          # Remove any existing bottle block (new bottles will be built by test-bot)
+          # Strip existing bottle block (new one built by test-bot)
           ruby -e '
             f = File.read("Formula/wtop.rb")
             f.gsub!(/\n  bottle do.*?end\n/m, "\n")
@@ -71,12 +50,9 @@ jobs:
           git commit -m "wtop ${VERSION}"
           git push -u origin "wtop-v${VERSION}"
 
-          # Create PR — this triggers bottle builds in the tap repo
           gh pr create \
             --repo abizer/homebrew-tap \
             --base master \
             --head "wtop-v${VERSION}" \
             --title "wtop ${VERSION}" \
-            --body "Automated version bump from [abizer/wtop](https://github.com/abizer/wtop) release workflow."
-        env:
-          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+            --body "Automated version bump from [abizer/wtop@v${VERSION}](https://github.com/abizer/wtop/releases/tag/v${VERSION})."

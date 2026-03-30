@@ -27,8 +27,23 @@ install: app
     rm -rf ~/Applications/wtop.app
     cp -R wtop.app ~/Applications/wtop.app
 
-# Uninstall
-uninstall:
+# Install privileged helper daemon (requires sudo, enables full system process energy)
+install-helper: build
+    sudo cp .build/release/wtop-helper /Library/PrivilegedHelperTools/me.abizer.wtop.helper
+    sudo cp Resources/me.abizer.wtop.helper.plist /Library/LaunchDaemons/
+    sudo launchctl bootout system/me.abizer.wtop.helper 2>/dev/null || true
+    sudo launchctl bootstrap system /Library/LaunchDaemons/me.abizer.wtop.helper.plist
+    @echo "Helper daemon installed and running as root"
+
+# Uninstall helper daemon
+uninstall-helper:
+    sudo launchctl bootout system/me.abizer.wtop.helper 2>/dev/null || true
+    sudo rm -f /Library/PrivilegedHelperTools/me.abizer.wtop.helper
+    sudo rm -f /Library/LaunchDaemons/me.abizer.wtop.helper.plist
+    @echo "Helper daemon removed"
+
+# Uninstall everything
+uninstall: uninstall-helper
     rm -rf ~/Applications/wtop.app
 
 # Run debug build

@@ -103,24 +103,18 @@ struct ContentView: View {
     @ViewBuilder
     private var adminButton: some View {
         switch helper.status {
-        case .enabled:
+        case .running:
             Label("Admin", systemImage: "lock.open.fill")
                 .font(.caption2)
                 .foregroundStyle(.green)
-        case .notRegistered, .failed:
-            Button(action: { helper.register() }) {
-                Label("Grant Admin", systemImage: "lock.shield")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help("Install privileged helper for full system process energy data")
-        case .requiresApproval:
-            Button(action: { helper.register() }) {
-                Label("Approve in Settings", systemImage: "gear")
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .tint(.orange)
+        case .notInstalled:
+            Label("Limited", systemImage: "lock.fill")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .help("Run 'just install-helper' or 'brew postinstall wtop' for full system process energy data")
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
         }
     }
 

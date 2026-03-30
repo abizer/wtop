@@ -4,14 +4,16 @@
 <dict>
     <key>Label</key>
     <string>me.abizer.wtop.helper</string>
-    <key>BundleProgram</key>
-    <string>Contents/Helpers/wtop-helper</string>
+    <key>Program</key>
+    <string>/Library/PrivilegedHelperTools/me.abizer.wtop.helper</string>
     <key>MachServices</key>
     <dict>
         <key>me.abizer.wtop.helper</key>
         <true/>
     </dict>
     <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
     <true/>
 </dict>
 </plist>

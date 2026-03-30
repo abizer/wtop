@@ -1,5 +1,7 @@
 set positional-arguments
 
+tap_repo := "../homebrew-tap"
+
 default: build
 
 # Build both app and helper
@@ -29,6 +31,7 @@ install: app
 
 # Install privileged helper daemon (requires sudo, enables full system process energy)
 install-helper: build
+    sudo mkdir -p /Library/PrivilegedHelperTools
     sudo cp .build/release/wtop-helper /Library/PrivilegedHelperTools/me.abizer.wtop.helper
     sudo cp Resources/me.abizer.wtop.helper.plist /Library/LaunchDaemons/
     sudo launchctl bootout system/me.abizer.wtop.helper 2>/dev/null || true
@@ -50,17 +53,37 @@ uninstall: uninstall-helper
 run:
     swift build && .build/debug/wtop
 
-# Create release zip for GitHub
+# Tag, push, and update the Homebrew tap formula
 release version:
     #!/bin/bash
     set -euo pipefail
-    just app
-    ditto -c -k --keepParent wtop.app "wtop.app.zip"
-    SHA=$(shasum -a 256 wtop.app.zip | cut -d' ' -f1)
-    echo "wtop.app.zip ready — sha256: $SHA"
-    echo ""
-    echo "  git tag v{{version}} && git push --tags"
-    echo "  gh release create v{{version}} wtop.app.zip --title 'v{{version}}'"
+
+    # Ensure clean working tree
+    if ! git diff --quiet HEAD; then
+        echo "Error: uncommitted changes. Commit first."
+        exit 1
+    fi
+
+    # Update Info.plist version
+    sed -i '' 's|<string>[0-9]*\.[0-9]*\.[0-9]*</string><!-- CFBundleVersion -->|<string>{{version}}</string><!-- CFBundleVersion -->|' Info.plist 2>/dev/null || true
+
+    # Tag and push
+    git tag "v{{version}}"
+    git push origin master --tags
+    echo "Tagged and pushed v{{version}}"
+
+    # Update tap formula
+    TAP="{{tap_repo}}"
+    if [ ! -d "$TAP/Formula" ]; then
+        echo "Error: tap repo not found at $TAP"
+        exit 1
+    fi
+    sed -i '' 's|tag: "v[0-9]*\.[0-9]*\.[0-9]*"|tag: "v{{version}}"|' "$TAP/Formula/wtop.rb"
+    cd "$TAP"
+    git add Formula/wtop.rb
+    git commit -m "wtop v{{version}}"
+    git push
+    echo "Tap updated to v{{version}}"
 
 # Clean build artifacts
 clean:

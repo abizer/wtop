@@ -1,6 +1,5 @@
 #!/bin/bash
 # Install the wtop privileged helper daemon.
-# Run with: sudo /Applications/wtop.app/Contents/Helpers/install-helper.sh
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -8,9 +7,10 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
-HELPER_SRC="$DIR/wtop-helper"
-PLIST_SRC="$DIR/../Resources/me.abizer.wtop.helper.plist"
+# Resolve paths relative to the .app bundle
+BUNDLE="$(cd "$(dirname "$0")/.." && pwd)"
+HELPER_SRC="$BUNDLE/Helpers/wtop-helper"
+PLIST_SRC="$BUNDLE/Resources/me.abizer.wtop.helper.plist"
 HELPER_DEST="/Library/PrivilegedHelperTools/me.abizer.wtop.helper"
 PLIST_DEST="/Library/LaunchDaemons/me.abizer.wtop.helper.plist"
 

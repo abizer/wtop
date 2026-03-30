@@ -13,8 +13,10 @@ Real-time power monitor for Apple Silicon Macs. Native SwiftUI app that shows ex
 ### Homebrew (recommended)
 
 ```bash
-brew install abizer/tap/wtop
+brew install --cask abizer/tap/wtop
 ```
+
+The cask downloads a pre-built `.app`, installs it to `/Applications`, strips the quarantine attribute, and sets up the privileged helper daemon (prompts for your password once).
 
 ## Features
 
@@ -28,7 +30,7 @@ brew install abizer/tap/wtop
 - **Thermal state** — nominal/fair/serious/critical indicator
 - **Battery projection** — estimated time remaining at current draw
 
-The app works without the privileged helper — system power, CPU/GPU/ANE/DRAM breakdown, core utilization, temperatures, and user-app energy are all available. The helper adds energy data for system daemons (WindowServer, kernel_task, etc.).
+The app works without the privileged helper — system power, CPU/GPU/ANE/DRAM breakdown, core utilization, temperatures, and user-app energy are all available. The helper adds full visibility into system daemons (WindowServer, kernel_task, launchd, etc.) including their CPU time and energy consumption.
 
 ### Controls
 
@@ -67,15 +69,12 @@ Requires Swift 5.9+ and macOS 14+.
 ## Uninstall
 
 ```bash
-brew uninstall wtop
-# Then clean up the helper:
-sudo launchctl bootout system/me.abizer.wtop.helper
-sudo rm -f /Library/PrivilegedHelperTools/me.abizer.wtop.helper
-sudo rm -f /Library/LaunchDaemons/me.abizer.wtop.helper.plist
-rm -f ~/Applications/wtop.app
+brew uninstall --cask wtop
 ```
 
-Or if installed from source:
+The cask's uninstall block handles launchctl cleanup and helper removal automatically.
+
+If installed from source:
 
 ```bash
 just uninstall

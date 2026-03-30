@@ -1,134 +1,139 @@
 # wtop
 
-Native macOS SwiftUI power monitor for Apple Silicon. Shows system power draw, per-component SoC breakdown, CPU core utilization, and per-process energy consumption.
+Native macOS SwiftUI power monitor for Apple Silicon.
 
 ## Build & Run
 
 ```bash
-just build          # builds both wtop and wtop-helper
-just install        # .app bundle → ~/Applications (Spotlight-searchable)
-just install-helper # privileged daemon → /Library/ (needs sudo, on-demand)
+just build            # release build of wtop + wtop-helper
+just app              # .app bundle in ./wtop.app
+just install          # .app → ~/Applications
+just install-helper   # privileged daemon → /Library/ (sudo)
+just run              # debug build + launch
+just release 0.5.0    # tag + push (CI handles the rest)
+just clean            # rm -rf .build wtop.app
 ```
 
-Or all at once:
+Homebrew:
 ```bash
-just install && just install-helper
-```
-
-Homebrew (one-touch, handles everything including the helper):
-```bash
-brew install abizer/tap/wtop
+brew install --cask abizer/tap/wtop
 ```
 
 ## Architecture
 
-Two executables + shared protocol:
-
 ```
 Sources/
-  App/                      ← SwiftUI app (runs as current user)
-    WtopApp.swift              App entry, ContentView, toolbar, admin status
-    Monitor.swift              SystemMonitor @Observable — all data sampling
-    Views.swift                Power cards, sparkline, core bars, process list
-    SMC.swift                  Apple SMC reader (temperatures)
-    IOReport.swift             IOReport private framework (CPU/GPU/ANE/DRAM watts)
-    HelperClient.swift         XPC client for the privileged helper
-  Helper/                   ← Privileged daemon (runs as root, on-demand)
-    main.swift                 XPC listener, proc_pid_rusage for all PIDs
-  Shared/                   ← Protocol definition
-    HelperProtocol.swift       @objc XPC protocol + Mach service name
+  App/                    ← SwiftUI app (runs as current user)
+    WtopApp.swift            App entry, ContentView, toolbar, admin badge
+    Monitor.swift            SystemMonitor @Observable — all sampling
+    Views.swift              Power cards, sparkline, core bars, process list
+    SMC.swift                SMC reader (temperatures)
+    IOReport.swift           IOReport private framework (CPU/GPU/ANE/DRAM)
+    HelperClient.swift       XPC client — decodes binary process data from helper
+  Helper/                 ← Privileged daemon (root, on-demand via launchd)
+    main.swift               XPC listener, returns full process data for ALL pids
+  Shared/                 ← Protocol definition
+    HelperProtocol.swift     @objc XPC protocol + Mach service name
 ```
 
-### Privilege Model
+### Why the helper exists
 
-The app runs as the current user. Most features work without root:
+`proc_pidinfo(PROC_PIDTASKALLINFO)` returns 0 for system processes (uid < 500) when running as a regular user. Without root, we can't even read CPU time for WindowServer, kernel_task, etc. The helper runs as root and provides full process data (pid, uid, cpu times, energy, threads, memory, path) over XPC.
 
-| Feature | Needs root? |
-|---------|-------------|
-| System/battery/adapter power | No |
-| CPU/GPU/ANE/DRAM breakdown (IOReport) | No |
-| Per-core CPU usage | No |
-| Temperatures (SMC) | No |
-| Thermal state | No |
-| User-app energy (Brave, Slack, etc.) | No |
-| **System daemon energy** (WindowServer, kernel_task) | **Yes — via helper** |
+### Helper lifecycle (on-demand)
 
-For system daemon energy, the app connects to a privileged helper daemon over XPC:
+1. `just install-helper` / cask postflight: registers LaunchDaemon (`RunAtLoad=false`, `KeepAlive=false`)
+2. App opens → XPC connect → launchd starts helper as root
+3. Helper serves data, tracks connection count
+4. App closes → 30s idle timer → `exit(0)`. Zero background resource usage.
+
+### Data flow
 
 ```
-[wtop.app]  ──XPC──▶  [wtop-helper]  ──proc_pid_rusage──▶  kernel
- (user)      Mach       (root)          RUSAGE_INFO_V6
-             service
+Without helper:  app ──proc_pidinfo──▶ kernel (user procs only)
+With helper:     app ──XPC──▶ helper ──proc_pidinfo──▶ kernel (all procs)
+                                     ──proc_pid_rusage──▶ (energy)
 ```
 
-### Helper Daemon Lifecycle
+The Monitor checks `helperClient.status == .running` and `helperData != nil`. If available, uses helper data. Otherwise falls back to local `gatherLocalProcs()`.
 
-The helper is **on-demand** — launchd starts it when the app connects, it exits when idle:
+## Distribution
 
-1. `just install-helper` (or `brew post_install`): copies binary to `/Library/PrivilegedHelperTools/`, registers LaunchDaemon plist with `launchctl bootstrap`. Helper does NOT start.
-2. App opens → connects to Mach service `me.abizer.wtop.helper` → launchd starts helper as root.
-3. App running → helper serves `proc_pid_rusage` data over XPC. Tracks active connection count.
-4. App closes → XPC connection invalidates → helper starts 30-second idle timer.
-5. Timer fires → `exit(0)`. Helper is gone. Zero resource usage until next app launch.
+### Homebrew cask (pre-built binary)
 
-Key files:
-- `/Library/PrivilegedHelperTools/me.abizer.wtop.helper` — the binary (root-owned)
-- `/Library/LaunchDaemons/me.abizer.wtop.helper.plist` — on-demand config (`RunAtLoad=false`, `KeepAlive=false`)
+CI builds `.app` on macOS arm64, uploads to GitHub Releases. Cask downloads and installs.
 
-### Distribution
+**Cask postflight:**
+1. `xattr -r -d com.apple.quarantine` (app is ad-hoc signed, not notarized)
+2. `install-helper.sh` with `sudo: true` (installs LaunchDaemon, prompts for password)
 
-**Homebrew formula** (builds from source, not a cask):
-- `install`: `swift build -c release`, installs binaries to Cellar
-- `post_install` (runs as root): copies helper to `/Library/PrivilegedHelperTools/`, registers LaunchDaemon, symlinks `.app` to `~/Applications`
-- No Developer ID signing needed — formula builds on user's machine, `launchctl` doesn't validate code signatures for third-party LaunchDaemons
-- Uninstall cleanup documented in caveats (Homebrew has no uninstall hook)
+**Cask uninstall block:** handles `launchctl bootout` + file cleanup automatically.
 
-**justfile recipes:**
-- `just build` — release build of both targets
-- `just app` — `.app` bundle with embedded helper
-- `just install` — copy `.app` to `~/Applications`
-- `just install-helper` — sudo: copy daemon + register LaunchDaemon
-- `just uninstall-helper` — sudo: bootout + remove files
-- `just uninstall` — removes everything
-- `just release <version>` — builds zip for GitHub Releases
+### Release pipeline
 
-### Data Sources
+```
+git tag v0.5.0 && git push --tags
+  → CI: build .app → zip → GitHub Release
+  → CI: update Casks/wtop.rb in homebrew-tap (version + sha256)
+  → Users: brew upgrade --cask wtop
+```
+
+Requires `TAP_TOKEN` secret (fine-grained PAT with `contents:write` + `pull-requests:write` on `abizer/homebrew-tap`).
+
+### justfile `release` recipe
+
+Just tags and pushes — CI does the rest:
+```bash
+just release 0.5.0  # → git tag v0.5.0 && git push --tags
+```
+
+## Data Sources
 
 | Data | API | Root? |
 |------|-----|-------|
-| System/battery power | IOKit `AppleSmartBattery` `PowerTelemetryData.SystemLoad` | No |
+| System/battery power | IOKit `AppleSmartBattery` → `PowerTelemetryData.SystemLoad` | No |
 | CPU/GPU/ANE/DRAM watts | IOReport `Energy Model` via `/usr/lib/libIOReport.dylib` | No |
-| Per-process energy | `proc_pid_rusage` / `rusage_info_v6.ri_energy_nj` | System procs only |
-| Per-process CPU + UID | `proc_pidinfo` / `PROC_PIDTASKALLINFO` (`.ptinfo` + `.pbsd`) | No |
+| Per-process energy | `rusage_info_v6.ri_energy_nj` via `proc_pid_rusage` | System procs: yes |
+| Per-process CPU/mem | `proc_pidinfo` / `PROC_PIDTASKALLINFO` | System procs: yes |
 | CPU core utilization | Mach `host_processor_info` / `PROCESSOR_CPU_LOAD_INFO` | No |
-| Temperatures | SMC keys via `sp78` fixed-point (cached to avoid flicker) | No |
+| Temperatures | SMC `sp78` keys (cached to avoid flicker) | No |
 | Thermal state | `ProcessInfo.processInfo.thermalState` | No |
 | System info | sysctl (`machdep.cpu.brand_string`, `hw.memsize`, etc.) | No |
-| GPU core count | IOKit `AGXAccelerator` / `gpu-core-count` property | No |
+| GPU core count | IOKit `AGXAccelerator` → `gpu-core-count` | No |
 | Memory usage | Mach `host_statistics64` / `HOST_VM_INFO64` | No |
 
-### Key Implementation Details
+## Key Gotchas
 
-**SMC struct layout (Apple Silicon):** `SMCParamStruct` must be exactly 80 bytes. Use `UInt32` for `KeyInfo.dataSize` (NOT `IOByteCount` which is 8 bytes on arm64). Include an explicit `padding: UInt16` between `keyInfo` and `result`. Selector is `2`. Check `output.result == 0` (non-zero = SMC error, e.g., `0x84` = key not found).
+**SMC struct (Apple Silicon):** Must be exactly 80 bytes. `KeyInfo.dataSize` = `UInt32` (NOT `IOByteCount`/8 bytes on arm64). Explicit `padding: UInt16` between `keyInfo` and `result`. Selector `2`. Check `output.result == 0`.
 
-**IOReport unit labels:** Most channels report in `mJ` (millijoules), but some aggregates like `"GPU Energy"` use `nJ`. Always read `IOReportChannelGetUnitLabel` and scale: `mJ` ÷ 1e3, `uJ` ÷ 1e6, `nJ` ÷ 1e9.
+**IOReport units:** Most channels report `mJ`, but `"GPU Energy"` aggregate uses `nJ`. Always check `IOReportChannelGetUnitLabel`. Scale: `mJ` ÷ 1e3, `uJ` ÷ 1e6, `nJ` ÷ 1e9.
 
-**IOReport dlopen:** Dylib at `/usr/lib/libIOReport.dylib` (not in CLI tools SDK headers). `IOReportCopyChannelsInGroup` returns immutable dict — must `CFDictionaryCreateMutableCopy` before `IOReportCreateSubscription`. Pass `subbedChannels` output (not original channels) to `IOReportCreateSamples`. Use `IOReportIterate` (block-based) to walk channels — there is no `GetChannelAtIndex`.
+**IOReport dlopen:** Dylib at `/usr/lib/libIOReport.dylib`. `IOReportCopyChannelsInGroup` returns immutable → `CFDictionaryCreateMutableCopy` before subscription. Pass `subbedChannels` (not original) to `IOReportCreateSamples`. Iterate via `IOReportIterate` (block-based).
 
-**IOReport channel naming:** Use aggregate channels `"CPU Energy"` and `"GPU Energy"` for CPU/GPU (per-core channels are near-zero on idle). For DRAM, sum `"DRAM*"` + `"DCS*"` + `"AMCC*"` individual channels. For ANE, match `"ANE*"`.
+**IOReport channels:** Use `"CPU Energy"` / `"GPU Energy"` aggregates. For DRAM sum `DRAM*` + `DCS*` + `AMCC*`. For ANE match `ANE*`.
 
-**Process classification:** UID via `proc_taskallinfo.pbsd.pbi_uid`. UIDs ≥ 500 = user, < 500 = system. More reliable than `.app` path detection (loginwindow, BiomeAgent, node all correctly classified as user).
+**proc_pidinfo visibility:** `PROC_PIDTASKALLINFO` returns 0 for system processes (uid < 500) without root. Both `PROC_PIDTASKALLINFO` and `PROC_PIDTASKINFO` fail. The helper is required for system process data.
 
-**proc_taskallinfo field name:** The task info member is `.ptinfo` in Swift (not `.ptask` as in the C header).
+**proc_taskallinfo field:** Swift imports the task info member as `.ptinfo` (not `.ptask`).
 
-**Process list stability:** Apps cached in `appCache` dict with 5-cycle expiry via `appAge`. View maintains a `cachedOrder` that only re-sorts on explicit user interaction (sort/filter/search), not on data updates.
+**Process classification:** UID ≥ 500 = user, < 500 = system. More reliable than `.app` path matching.
 
-**Temperature stability:** SMC `temp()` can intermittently return nil. `lastTemps` dict caches last-known values to prevent UI flicker.
+**Process list stability:** `appCache` dict with 5-cycle expiry. View uses `cachedOrder` that re-sorts only on user interaction.
 
-**sysctl types:** Apple Silicon sysctl values like `hw.logicalcpu` return `Int32` (4 bytes), not `Int` (8 bytes). The helper must check `size` and handle both.
+**Temperature stability:** `lastTemps` dict caches last-known values (SMC reads intermittently return nil).
 
-**macOS GUI privilege escalation:** Running a GUI app as root doesn't work — the WindowServer is per-user-session, root processes can't properly handle Apple Events/Dock interactions. The correct pattern is: GUI runs as user, privileged helper runs as root daemon, they communicate via XPC. `setuid` doesn't work (App Translocation strips it). `AuthorizationExecuteWithPrivileges` runs inside `security_authtrampoline` which can't host SwiftUI windows.
+**sysctl Int32:** Apple Silicon sysctl values return `Int32` (4 bytes), not `Int` (8 bytes).
+
+**GUI privilege escalation doesn't work:** Root GUI apps can't handle Apple Events (WindowServer is per-user-session). `setuid` fails (App Translocation). `AuthorizationExecuteWithPrivileges` runs inside `security_authtrampoline` (can't host SwiftUI). Correct pattern: user GUI + root daemon + XPC.
+
+**Homebrew sandbox:** `swift build` inside Homebrew requires `--disable-sandbox` (SPM's `sandbox-exec` conflicts with Homebrew's own sandbox).
+
+**Homebrew `install` moves files:** `Pathname#install` MOVES (not copies). Build .app bundle BEFORE calling `(etc/"wtop").install`.
+
+**Homebrew quarantine:** Casks are quarantined by default. Strip in postflight: `xattr -r -d com.apple.quarantine`.
+
+**Codesign + shell scripts:** Shell scripts in `Contents/Helpers/` break `codesign`. Put scripts in `Contents/Resources/` instead.
 
 ## Dependencies
 
-None — pure Swift with system frameworks only (IOKit, AppKit, SwiftUI, Darwin, Security, ServiceManagement). No third-party packages.
+None. Pure Swift + system frameworks (IOKit, AppKit, SwiftUI, Darwin, ServiceManagement).

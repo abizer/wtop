@@ -25,10 +25,10 @@ jobs:
           mkdir -p wtop.app/Contents/{MacOS,Helpers,Resources}
           cp "$BIN/wtop" wtop.app/Contents/MacOS/
           cp "$BIN/wtop-helper" wtop.app/Contents/Helpers/
-          cp support/install-helper.sh wtop.app/Contents/Helpers/
-          chmod +x wtop.app/Contents/Helpers/install-helper.sh
           cp Info.plist wtop.app/Contents/
           cp support/me.abizer.wtop.helper.plist wtop.app/Contents/Resources/
+          cp support/install-helper.sh wtop.app/Contents/Resources/
+          chmod +x wtop.app/Contents/Resources/install-helper.sh
           codesign --force --sign - wtop.app/Contents/Helpers/wtop-helper
           codesign --force --sign - wtop.app
 

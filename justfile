@@ -19,7 +19,7 @@ app: build
     cp .build/release/wtop wtop.app/Contents/MacOS/
     cp .build/release/wtop-helper wtop.app/Contents/Helpers/
     cp Info.plist wtop.app/Contents/
-    cp Resources/me.abizer.wtop.helper.plist wtop.app/Contents/Resources/
+    cp support/me.abizer.wtop.helper.plist wtop.app/Contents/Resources/
     codesign --force --sign - wtop.app/Contents/Helpers/wtop-helper
     codesign --force --sign - wtop.app
 
@@ -33,7 +33,7 @@ install: app
 install-helper: build
     sudo mkdir -p /Library/PrivilegedHelperTools
     sudo cp .build/release/wtop-helper /Library/PrivilegedHelperTools/me.abizer.wtop.helper
-    sudo cp Resources/me.abizer.wtop.helper.plist /Library/LaunchDaemons/
+    sudo cp support/me.abizer.wtop.helper.plist /Library/LaunchDaemons/
     sudo launchctl bootout system/me.abizer.wtop.helper 2>/dev/null || true
     sudo launchctl bootstrap system /Library/LaunchDaemons/me.abizer.wtop.helper.plist
     @echo "Helper daemon registered (on-demand — starts when wtop.app opens)"

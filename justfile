@@ -18,9 +18,9 @@ app: build
     mkdir -p wtop.app/Contents/{MacOS,Helpers,Resources}
     cp .build/release/wtop wtop.app/Contents/MacOS/
     cp .build/release/wtop-helper wtop.app/Contents/Helpers/
-    cp support/install-helper.sh wtop.app/Contents/Helpers/
     cp Info.plist wtop.app/Contents/
     cp support/me.abizer.wtop.helper.plist wtop.app/Contents/Resources/
+    cp support/install-helper.sh wtop.app/Contents/Resources/
     codesign --force --sign - wtop.app/Contents/Helpers/wtop-helper
     codesign --force --sign - wtop.app
 

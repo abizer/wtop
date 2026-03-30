@@ -26,7 +26,7 @@ jobs:
 
       - name: Build
         if: steps.check.outputs.exists == 'false'
-        run: swift build -c release --disable-sandbox
+        run: swift build -c release
 
       - name: Test
         if: steps.check.outputs.exists == 'false'

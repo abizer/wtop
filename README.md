@@ -2,6 +2,8 @@
 
 Real-time power monitor for Apple Silicon Macs. Native SwiftUI app that shows exactly where your watts are going — from the SoC components down to individual apps.
 
+_written by [Claude Opus 4.6](https://www.anthropic.com/news/claude-opus-4-6) via Claude Code_
+
 ![wtop screenshot](https://github.com/abizer/wtop/raw/master/screenshot.png)
 
 ## Features

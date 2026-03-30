@@ -32,30 +32,22 @@ class Wtop < Formula
   end
 
   def post_install
-    # Install the LaunchDaemon for the privileged helper
     helper_dest = "/Library/PrivilegedHelperTools/me.abizer.wtop.helper"
     plist_dest = "/Library/LaunchDaemons/me.abizer.wtop.helper.plist"
 
     # Copy helper binary
+    mkdir_p "/Library/PrivilegedHelperTools"
     cp libexec/"wtop-helper", helper_dest
     chmod 0755, helper_dest
 
-    # Write LaunchDaemon plist (can't symlink — launchd requires owned files)
-    plist_content = {
-      "Label" => "me.abizer.wtop.helper",
-      "Program" => helper_dest,
-      "MachServices" => { "me.abizer.wtop.helper" => true },
-      "RunAtLoad" => true,
-      "KeepAlive" => true,
-    }
-    File.write(plist_dest, plist_content.to_plist) rescue nil
+    # Install LaunchDaemon plist (on-demand: only runs when wtop.app connects)
+    cp etc/"wtop/me.abizer.wtop.helper.plist", plist_dest
 
-    # Load the daemon
+    # Register with launchd (won't start until the app connects via XPC)
     system "launchctl", "bootout", "system/me.abizer.wtop.helper", 2 => "/dev/null" rescue nil
-    system "launchctl", "bootstrap", "system", plist_dest rescue nil
+    system "launchctl", "bootstrap", "system", plist_dest
 
     # Symlink .app to ~/Applications for Spotlight
-    ohai "Linking wtop.app to ~/Applications..."
     apps_dir = File.expand_path("~/Applications")
     FileUtils.mkdir_p(apps_dir)
     FileUtils.rm_rf("#{apps_dir}/wtop.app")
@@ -66,18 +58,13 @@ class Wtop < Formula
     <<~EOS
       wtop is installed as both a CLI tool and a GUI app:
 
-        CLI:  wtop (or sudo wtop for full data)
+        CLI:  wtop
         GUI:  Search "wtop" in Spotlight/Raycast
 
-      The privileged helper daemon has been installed to enable
-      full system process energy monitoring. To check its status:
-
-        sudo launchctl list me.abizer.wtop.helper
+      A privileged helper runs on-demand (only while wtop is open)
+      to provide full system process energy data. It exits automatically
+      30 seconds after the app closes.
     EOS
-  end
-
-  service do
-    name macos: "me.abizer.wtop.helper"
   end
 
   test do

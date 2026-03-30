@@ -1,21 +1,42 @@
-/// wtop-helper: Privileged helper daemon for wtop.
+/// wtop-helper: On-demand privileged helper for wtop.
 ///
-/// Runs as root via SMAppService.daemon(). Exposes energy data for
-/// system processes over XPC that the unprivileged app can't access.
-///
-/// Installed to /Library/PrivilegedHelperTools/ by macOS when the user
-/// approves the daemon in System Settings > Login Items.
+/// Launched by launchd when the app connects to its Mach service.
+/// Exits automatically after 30 seconds of no active XPC connections.
+/// Never runs persistently — only alive while wtop.app is open.
 
 import Foundation
 import Darwin
 
-// MARK: - XPC Protocol (duplicated from Shared — SPM can't share across exec targets easily)
+// MARK: - XPC Protocol
 
 @objc protocol HelperProtocol {
     func getAllProcessEnergy(reply: @escaping ([Int32: UInt64]) -> Void)
 }
 
 let machServiceName = "me.abizer.wtop.helper"
+
+// MARK: - Connection tracking + auto-exit
+
+var activeConnections = 0
+var idleTimer: Timer?
+let idleTimeout: TimeInterval = 30
+
+func connectionOpened() {
+    activeConnections += 1
+    idleTimer?.invalidate()
+    idleTimer = nil
+}
+
+func connectionClosed() {
+    activeConnections -= 1
+    if activeConnections <= 0 {
+        activeConnections = 0
+        // Start countdown — exit if no new connections within timeout
+        idleTimer = Timer.scheduledTimer(withTimeInterval: idleTimeout, repeats: false) { _ in
+            exit(0)
+        }
+    }
+}
 
 // MARK: - Implementation
 
@@ -54,14 +75,13 @@ class HelperImpl: NSObject, HelperProtocol {
 class ListenerDelegate: NSObject, NSXPCListenerDelegate {
     func listener(_ listener: NSXPCListener,
                   shouldAcceptNewConnection conn: NSXPCConnection) -> Bool {
-        // TODO: When Developer ID signing is available, validate the client:
-        // conn.setCodeSigningRequirement(
-        //     "identifier \"me.abizer.wtop\" and anchor apple generic " +
-        //     "and certificate leaf[subject.OU] = \"YOUR_TEAM_ID\""
-        // )
-
         conn.exportedInterface = NSXPCInterface(with: HelperProtocol.self)
         conn.exportedObject = HelperImpl()
+
+        connectionOpened()
+        conn.invalidationHandler = { connectionClosed() }
+        conn.interruptionHandler = { connectionClosed() }
+
         conn.resume()
         return true
     }
@@ -71,4 +91,10 @@ let delegate = ListenerDelegate()
 let listener = NSXPCListener(machServiceName: machServiceName)
 listener.delegate = delegate
 listener.resume()
+
+// Start idle timer immediately — exit if nobody connects within 30s
+idleTimer = Timer.scheduledTimer(withTimeInterval: idleTimeout, repeats: false) { _ in
+    exit(0)
+}
+
 RunLoop.current.run()

@@ -53,6 +53,17 @@ wtop reads from five macOS subsystems, none of which require third-party depende
 
 The privileged helper runs **on-demand** — launchd starts it when the app opens an XPC connection, and it exits 30 seconds after the app closes. It never runs in the background.
 
+### Architecture
+
+```
+Sources/
+  App/         SwiftUI app (runs as user)
+  Helper/      Privileged daemon (root, on-demand via launchd + XPC)
+  Shared/      XPC protocol definition
+```
+
+Without root, `proc_pidinfo` can't see system processes. The helper provides full process data for all PIDs over XPC when installed. Without it, user apps are still fully visible.
+
 ### Install from source
 
 This builds from source, installs the app to `~/Applications` (Spotlight-searchable), and sets up a privileged helper daemon for full system process energy data.

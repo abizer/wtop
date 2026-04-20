@@ -35,6 +35,10 @@ jobs:
       - name: Create zip
         run: ditto -c -k --keepParent wtop.app wtop.app.zip
 
+      - name: Compute sha256
+        id: sha
+        run: echo "sha256=$(shasum -a 256 wtop.app.zip | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -44,23 +48,15 @@ jobs:
             --title "v${VERSION}" \
             --generate-notes
 
-      - name: Update Homebrew cask
+      - name: Bump homebrew cask
+        uses: mislav/bump-homebrew-formula-action@v4
+        with:
+          formula-name: wtop
+          formula-path: Casks/wtop.rb
+          homebrew-tap: abizer/homebrew-tap
+          base-branch: master
+          download-url: https://github.com/abizer/wtop/releases/download/v${{ steps.version.outputs.version }}/wtop.app.zip
+          download-sha256: ${{ steps.sha.outputs.sha256 }}
+          commit-message: "wtop {{version}}"
         env:
-          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
-          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          SHA=$(shasum -a 256 wtop.app.zip | cut -d' ' -f1)
-
-          git clone https://x-access-token:${TAP_TOKEN}@github.com/abizer/homebrew-tap.git tap
-          cd tap
-
-          # Update version and sha256 in cask
-          sed -i '' "s|version \"[0-9]*\.[0-9]*\.[0-9]*\"|version \"${VERSION}\"|" Casks/wtop.rb
-          sed -i '' "s|sha256 .*|sha256 \"${SHA}\"|" Casks/wtop.rb
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/wtop.rb
-          git commit -m "wtop ${VERSION}"
-          git push
+          COMMITTER_TOKEN: ${{ secrets.TAP_TOKEN }}

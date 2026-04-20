@@ -48,18 +48,31 @@ jobs:
             --title "v${VERSION}" \
             --generate-notes
 
-      # download-url contains a literal Ruby interpolation (#{version}) so the
-      # cask's url stanza retains it — otherwise brew audit flags the URL as
-      # unversioned. Ruby evaluates #{version} at cask load time.
+      # brew bump-cask-pr is Homebrew's canonical cask bumper — preserves
+      # #{version} interpolation in the url stanza (unlike mislav's JS action,
+      # which parses the cask as plain text). --write-only --commit makes it
+      # commit locally without opening a PR; we push the commit ourselves.
+      - uses: Homebrew/actions/setup-homebrew@main
       - name: Bump homebrew cask
-        uses: mislav/bump-homebrew-formula-action@v4
-        with:
-          formula-name: wtop
-          formula-path: Casks/wtop.rb
-          homebrew-tap: abizer/homebrew-tap
-          base-branch: master
-          download-url: 'https://github.com/abizer/wtop/releases/download/v#{version}/wtop.app.zip'
-          download-sha256: ${{ steps.sha.outputs.sha256 }}
-          commit-message: "wtop {{version}}"
         env:
-          COMMITTER_TOKEN: ${{ secrets.TAP_TOKEN }}
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          HOMEBREW_NO_INSTALL_FROM_API: "1"
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.sha.outputs.sha256 }}"
+
+          brew tap abizer/homebrew-tap
+          tap_repo="$(brew --repository abizer/homebrew-tap)"
+          cd "$tap_repo"
+          git remote set-url origin "https://x-access-token:${TAP_TOKEN}@github.com/abizer/homebrew-tap.git"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          brew bump-cask-pr \
+            --write-only --commit \
+            --no-audit --no-style \
+            --version="${VERSION}" \
+            --sha256="${SHA}" \
+            abizer/tap/wtop
+
+          git push origin HEAD:master

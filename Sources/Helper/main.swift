@@ -55,6 +55,7 @@ struct ProcessEntry {
 
 func encodeEntries(_ entries: [ProcessEntry]) -> Data {
     var data = Data()
+    data.reserveCapacity(4 + entries.count * 120)  // 46B fixed fields + typical path length
     // Header: entry count
     var count = UInt32(entries.count)
     data.append(Data(bytes: &count, count: 4))

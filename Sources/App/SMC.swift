@@ -45,6 +45,7 @@ final class SMC: @unchecked Sendable {
     )
 
     private var conn: io_connect_t = 0
+    private var keyInfoCache: [UInt32: KeyInfo] = [:]  // key metadata never changes; skip kSMCGetKeyInfo after first read
 
     init?() {
         let service = IOServiceGetMatchingService(
@@ -83,10 +84,15 @@ final class SMC: @unchecked Sendable {
         var inp = Param(), out = Param()
         inp.key = fourCC(key)
 
-        inp.data8 = 9 // kSMCGetKeyInfo
-        guard call(&inp, &out) else { return nil }
+        if let cached = keyInfoCache[inp.key] {
+            inp.keyInfo = cached
+        } else {
+            inp.data8 = 9 // kSMCGetKeyInfo
+            guard call(&inp, &out) else { return nil }
+            keyInfoCache[inp.key] = out.keyInfo
+            inp.keyInfo = out.keyInfo
+        }
 
-        inp.keyInfo = out.keyInfo
         inp.data8 = 5 // kSMCReadKey
         out = Param()
         guard call(&inp, &out) else { return nil }

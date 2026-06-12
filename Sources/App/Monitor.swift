@@ -3,6 +3,10 @@ import Darwin
 import IOKit
 import Observation
 
+/// mach_host_self() bumps the port's send-right refcount on every call and the right is
+/// never deallocated here — cache one for the process lifetime instead of leaking refs each tick.
+private let machHost: host_t = mach_host_self()
+
 // MARK: - Models
 
 struct ProcUsage: Identifiable {
@@ -133,7 +137,7 @@ struct SystemInfo {
         var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
         withUnsafeMutablePointer(to: &stats) { ptr in
             ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                _ = host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                _ = host_statistics64(machHost, HOST_VM_INFO64, $0, &count)
             }
         }
         let pageSize = UInt64(vm_kernel_page_size)
@@ -373,14 +377,19 @@ final class SystemMonitor {
 
     // MARK: - Power
 
+    // Cached for the app's lifetime — registry matching every tick is needless IOKit churn
+    private var batteryService: io_service_t = 0
+
     private func samplePower() {
         var reading = PowerReading()
 
-        let service = IOServiceGetMatchingService(
-            kIOMainPortDefault, IOServiceMatching("AppleSmartBattery")
-        )
+        if batteryService == 0 {
+            batteryService = IOServiceGetMatchingService(
+                kIOMainPortDefault, IOServiceMatching("AppleSmartBattery")
+            )
+        }
+        let service = batteryService
         if service != 0 {
-            defer { IOObjectRelease(service) }
             var cfProps: Unmanaged<CFMutableDictionary>?
             if IORegistryEntryCreateCFProperties(service, &cfProps, kCFAllocatorDefault, 0) == kIOReturnSuccess,
                let dict = cfProps?.takeRetainedValue() as? [String: Any] {
@@ -459,7 +468,7 @@ final class SystemMonitor {
         var numInfo: mach_msg_type_number_t = 0
 
         guard host_processor_info(
-            mach_host_self(), PROCESSOR_CPU_LOAD_INFO,
+            machHost, PROCESSOR_CPU_LOAD_INFO,
             &numCPUs, &cpuInfo, &numInfo
         ) == KERN_SUCCESS, let info = cpuInfo else { return }
 

@@ -110,6 +110,10 @@ just release 0.5.0  # → git tag v0.5.0 && git push --tags
 
 **IOReport dlopen:** Dylib at `/usr/lib/libIOReport.dylib`. `IOReportCopyChannelsInGroup` returns immutable → `CFDictionaryCreateMutableCopy` before subscription. Pass `subbedChannels` (not original) to `IOReportCreateSamples`. Iterate via `IOReportIterate` (block-based).
 
+**IOReport Create-rule leaks:** `IOReportCreateSamples` / `IOReportCreateSamplesDelta` return +1-retained CF objects. Held as `UnsafeRawPointer` they're invisible to ARC — must `Unmanaged.fromOpaque(p).release()` both the old prev sample and the delta every tick, or the app leaks ~100KB/sample (20GB after a couple of days).
+
+**Mach port refcounts:** `mach_host_self()` bumps a send-right refcount per call. Cache one `host_t` for the process lifetime instead of calling it every sample.
+
 **IOReport channels:** Use `"CPU Energy"` / `"GPU Energy"` aggregates. For DRAM sum `DRAM*` + `DCS*` + `AMCC*`. For ANE match `ANE*`.
 
 **proc_pidinfo visibility:** `PROC_PIDTASKALLINFO` returns 0 for system processes (uid < 500) without root. Both `PROC_PIDTASKALLINFO` and `PROC_PIDTASKINFO` fail. The helper is required for system process data.

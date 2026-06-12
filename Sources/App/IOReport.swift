@@ -73,9 +73,15 @@ final class IOReportPower: @unchecked Sendable {
     func sample(interval: Double) -> Reading? {
         guard let prev = prevSample else { return nil }
         guard let curr = createSample(subscription, subbedChannels, nil) else { return nil }
-        defer { prevSample = curr }
+        // IOReportCreateSamples/CreateSamplesDelta follow the CF Create rule (+1 retained);
+        // held as UnsafeRawPointer they're invisible to ARC and must be CFReleased here.
+        defer {
+            Unmanaged<AnyObject>.fromOpaque(prev).release()
+            prevSample = curr
+        }
 
         guard let delta = createDelta(prev, curr, nil) else { return nil }
+        defer { Unmanaged<AnyObject>.fromOpaque(delta).release() }
         guard interval > 0.01 else { return nil }
 
         var reading = Reading()

@@ -8,8 +8,9 @@ set -euo pipefail
 VERSION="${1:?usage: make-app.sh <version>}"
 cd "$(dirname "$0")/.."
 
-swift build -c release --disable-sandbox
-BIN="$(swift build -c release --disable-sandbox --show-bin-path)"
+# WTOP_BUILD_FLAGS: extra flags from the justfile (see there); empty in CI.
+swift build -c release --disable-sandbox ${WTOP_BUILD_FLAGS:-}
+BIN="$(swift build -c release --disable-sandbox ${WTOP_BUILD_FLAGS:-} --show-bin-path)"
 
 rm -rf wtop.app
 mkdir -p wtop.app/Contents/{MacOS,Helpers,Resources}

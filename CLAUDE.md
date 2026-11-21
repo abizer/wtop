@@ -26,7 +26,7 @@ brew install --cask abizer/wtop/wtop
 ```
 Sources/
   App/                    ← SwiftUI app (runs as current user)
-    WtopApp.swift            App entry (single Window), ContentView, toolbar, helper badge
+    WtopApp.swift            App entry (single Window), ContentView, native toolbar, helper badge
     Monitor.swift            SystemMonitor @Observable @MainActor — timer loop, publishes snapshots
     Sampler.swift            actor Sampler — ALL measuring, off the main thread
     Models.swift             Sendable value types (ProcUsage, AppUsage, PowerReading, SystemInfo…)
@@ -126,6 +126,8 @@ The bundle version comes from the tag: `support/make-app.sh <version>` stamps `C
 ## Key Gotchas
 
 **Building without Xcode (Command Line Tools only):** the macOS 27 SDK makes SwiftUI's `@State` a macro whose plugin (`SwiftUIMacros`) ships only with Xcode, so `swift build` fails with "plugin for module 'SwiftUIMacros' not found". The justfile exports `SDKROOT` to the CLT's `MacOSX26.sdk` in that case — use `just`, or set `SDKROOT` yourself for bare `swift` commands. Same toolchain intermittently drops the Swift Testing plugin; `just test` passes `-plugin-path` explicitly. SourceKit diagnostics in editors will still show these as errors — trust the build.
+
+**Liquid Glass comes from the SDK stamp, not from code:** macOS gives an app the new design when its binary's `LC_BUILD_VERSION` says SDK ≥ 26 (`otool -l … | grep -A5 LC_BUILD_VERSION`). The UI uses only standard pieces (`.toolbar`, `navigationSubtitle`, segmented pickers), so there are no `glassEffect` calls and no availability checks — content cards deliberately stay plain, since glass is for the control layer. The CLT linker stamps the deployment target (14.0) as the SDK version, which silently renders a local build in the old style; the justfile corrects it with `-Xlinker -platform_version` (`WTOP_BUILD_FLAGS`, also read by `support/make-app.sh`). CI's Xcode stamps it correctly. A window must be frontmost for the glass to show in a screenshot.
 
 **CPU time is in Mach ticks, not nanoseconds:** `proc_taskinfo.pti_total_user/system` (and `rusage_info` times) are Mach absolute time units — 125/3 ns each on Apple Silicon. Scale by `mach_timebase_info` or CPU reads ~42× too low. A fully pinned core must show ~1000 ms/s; `Tests/AppTests` asserts exactly that.
 

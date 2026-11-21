@@ -224,12 +224,10 @@ actor Sampler {
         }
 
         if let soc = ioReport?.sample() {
+            reading.cpuW = soc.cpuW
             reading.gpuW = soc.gpuW
-            if soc.powerManagerIsLive {
-                reading.cpuW = soc.cpuW
-                reading.aneW = soc.aneW
-                reading.dramW = soc.dramW
-            }
+            reading.aneW = soc.aneW
+            reading.dramW = soc.dramW
             reading.hasIOReport = true
         }
         return reading

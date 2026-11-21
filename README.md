@@ -46,7 +46,7 @@ wtop reads from five macOS subsystems, none of which require third-party depende
 | What | How |
 |------|-----|
 | System power | IOKit `AppleSmartBattery` registry |
-| CPU/GPU/ANE/DRAM | IOReport `Energy Model` channels via `/usr/lib/libIOReport.dylib` |
+| CPU/GPU/ANE/DRAM | IOReport `Energy Model` channels via `/usr/lib/libIOReport.dylib` (CLPC energy counters on macOS 27, where the Energy Model freezes) |
 | Per-process energy | `proc_pid_rusage` with `rusage_info_v6.ri_energy_nj` |
 | CPU core load | Mach `host_processor_info` |
 | Temperatures | SMC keys via IOKit (little-endian `flt ` on Apple Silicon) |

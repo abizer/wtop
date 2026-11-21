@@ -8,7 +8,7 @@ Accuracy — several numbers on screen were wrong:
 - **Temperatures were noise.** Apple Silicon SMC keys are little-endian floats; they were being decoded as `sp78` fixed-point, producing random values that happened to fall in a plausible range. Now decoded by each key's declared type.
 - **Battery watts read 0 while discharging.** The signed amperage failed an unsigned cast for every negative value.
 - **CPU/GPU/ANE/DRAM watts were wrong at any interval other than 2s** (4× low at 0.5s, 2.5× high at 5s). All rates now divide by measured elapsed time instead of the nominal interval.
-- **Frozen power-manager counters show "—" instead of "0 mW".**
+- **CPU, ANE and DRAM read 0 mW on macOS 27.** The `Energy Model` counters freeze there for apps without an Apple entitlement. They are now read from the CLPC driver's energy counters (IDs ported from [macmon](https://github.com/vladkens/macmon)); a chip without known IDs shows "—" rather than a false zero.
 - Process data from the helper is no longer one tick stale, and apps that go quiet show zero instead of their last reading.
 - WebKit and other `com.apple.*` helpers are no longer grouped under an app called "com".
 

@@ -32,6 +32,7 @@ Sources/
     Views.swift              Power cards, sparkline, core bars, process list
     SMC.swift                SMC reader (temperatures)
     IOReport.swift           IOReport private framework (CPU/GPU/ANE/DRAM)
+    CLPC.swift               AppleCLPC energy counter IDs — the macOS 27 source for CPU/ANE/DRAM
     HelperClient.swift       actor — XPC client with retry backoff
   Helper/                 ← Privileged daemon (root, on-demand via launchd)
     main.swift               XPC listener; replies with ProcessRecord.snapshot()
@@ -106,7 +107,7 @@ The bundle version comes from the tag: `support/make-app.sh <version>` stamps `C
 | Data | API | Root? |
 |------|-----|-------|
 | System/battery power | IOKit `AppleSmartBattery` → `PowerTelemetryData.SystemLoad` | No |
-| CPU/GPU/ANE/DRAM watts | IOReport `Energy Model` via `/usr/lib/libIOReport.dylib` | No |
+| CPU/GPU/ANE/DRAM watts | IOReport `Energy Model` (macOS 27: `CLPC` counters for CPU/ANE/DRAM) via `/usr/lib/libIOReport.dylib` | No |
 | Per-process energy | `rusage_info_v6.ri_energy_nj` via `proc_pid_rusage` | System procs: yes |
 | Per-process CPU/mem | `proc_pidinfo` / `PROC_PIDTASKALLINFO` | System procs: yes |
 | CPU core utilization | Mach `host_processor_info` / `PROCESSOR_CPU_LOAD_INFO` | No |
@@ -126,7 +127,7 @@ The bundle version comes from the tag: `support/make-app.sh <version>` stamps `C
 
 **IOKit signed numbers:** `InstantAmperage` etc. are signed CFNumbers that `ioreg` prints as huge unsigned values. Cast `as? Int`; `as? UInt64` returns nil for every negative value (i.e. whenever the battery is discharging).
 
-**Frozen power-manager counters:** the `AppleT6031PMGR` Energy Model channels (CPU, ANE, DRAM, DISP…) have been observed stuck at a constant value on a machine with weeks of uptime, while `GPU Energy` (AGX driver) kept advancing. A zero CPU delta therefore means "frozen" — the UI shows "—" rather than 0 mW.
+**macOS 27 freezes the Energy Model:** without an Apple entitlement, the power manager's `Energy Model` channels (CPU, ANE, DRAM, DISP… — all of `AppleT60xxPMGR`) sit at a constant value for minutes and then catch up in one jump; only `GPU Energy` (AGX driver) stays live. A reboot doesn't help. On 27+ CPU/ANE/DRAM are therefore read from AppleCLPC's `Energy Counters` instead (`CLPC.swift`): unpublished channels subscribed by hard-coded per-chip report IDs, table ported from macmon and generated from 27.2. A chip or OS major missing from the table shows "—" — never the Energy Model value, which would be a false zero or a spike of hundreds of watts. If the cards go "—" after an OS update, the IDs moved: refresh the table from macmon's `src/clpc.rs`.
 
 **Wire format is frozen:** an installed helper is only replaced when the user reinstalls it, so `ProcessRecord.encode/decode` must stay byte-compatible (there is a test pinning the layout). The XPC selector `getProcessDataWithReply:` likewise.
 

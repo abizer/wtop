@@ -101,7 +101,7 @@ struct PowerCard: View {
                 Text("—")
                     .font(.system(.title3, design: .rounded, weight: .semibold))
                     .foregroundStyle(.tertiary)
-                    .help("This sensor's energy counter isn't advancing, so there is no reading to show.")
+                    .help("macOS doesn't give wtop a live energy counter for this on this Mac, so there is no reading to show.")
             }
             if let sub = subtitle {
                 Text(sub).font(.caption2).foregroundStyle(.tertiary)

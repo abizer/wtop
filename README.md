@@ -22,7 +22,8 @@ The cask downloads a pre-built `.app`, installs it to `/Applications`, strips th
 
 - **System power** — total draw, battery discharge rate, adapter input
 - **SoC breakdown** — CPU, GPU, ANE, DRAM power via IOReport
-- **Per-process energy** — actual watts per app, not just CPU time
+- **Where the rest goes** — display backlight, the rest of the chip, and whatever no sensor accounts for, so the breakdown adds up to the system total
+- **Per-process energy** — actual watts per app, not just CPU time, including each app's share of GPU power
 - **CPU cores** — per-core utilization for E-cluster and P-cluster
 - **Temperatures** — CPU, SSD, battery via SMC sensors
 - **App grouping** — Brave's 12 helper processes collapse into one row

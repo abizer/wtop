@@ -33,6 +33,23 @@ struct PowerSection: View {
                 }
             }
 
+            // Where the rest of the system figure goes. With the row above, these add up to it.
+            if power.socOtherW != nil || power.displayW != nil {
+                HStack(spacing: 10) {
+                    if let socOther = power.socOtherW {
+                        PowerCard("Other SoC", watts: socOther, color: .indigo,
+                                  help: "The rest of the chip: display controller, video and camera blocks, I/O.")
+                    }
+                    if let display = power.displayW {
+                        PowerCard("Display", watts: display, color: .yellow, help: "The display backlight.")
+                    }
+                    if let unattributed = power.unattributedW {
+                        PowerCard("Everything Else", watts: unattributed, color: .gray,
+                                  help: "System power no sensor accounts for: SSD, Wi-Fi and Bluetooth, the display's electronics, speakers, and power-conversion losses. It grows under heavy GPU load, when the system draws more than the chip's own counters report.")
+                    }
+                }
+            }
+
             // Sparkline
             if history.count > 2 {
                 Sparkline(values: history, color: .orange)
@@ -47,7 +64,7 @@ struct PowerSection: View {
                 ForEach(temps) { t in
                     HStack(spacing: 2) {
                         Text(t.label).foregroundStyle(.secondary)
-                        Text(String(format: "%.0f°", t.celsius))
+                        Text(String(format: "%.0f°C", t.celsius))
                     }
                     .font(.caption)
                 }
@@ -81,9 +98,10 @@ struct PowerCard: View {
     let watts: Double?
     let color: Color
     let subtitle: String?
+    let help: String
 
-    init(_ label: String, watts: Double?, color: Color, subtitle: String? = nil) {
-        self.label = label; self.watts = watts; self.color = color; self.subtitle = subtitle
+    init(_ label: String, watts: Double?, color: Color, subtitle: String? = nil, help: String = "") {
+        self.label = label; self.watts = watts; self.color = color; self.subtitle = subtitle; self.help = help
     }
 
     var body: some View {
@@ -110,6 +128,7 @@ struct PowerCard: View {
         .frame(maxWidth: .infinity, minHeight: 56)
         .padding(.vertical, 10)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .help(help)
         .accessibilityElement(children: .combine)
     }
 }
@@ -271,6 +290,7 @@ struct CoreBar: View {
 
 enum SortField: String, CaseIterable {
     case power = "Power"
+    case gpu = "GPU"
     case cpu = "CPU"
     case memory = "Memory"
     case name = "Name"
@@ -311,6 +331,7 @@ struct AppSection: View {
     private func ranked(_ list: [AppUsage]) -> [AppUsage] {
         switch sortBy {
         case .power:  list.sorted { ($1.totalEnergyW, $0.id) < ($0.totalEnergyW, $1.id) }
+        case .gpu:    list.sorted { ($1.totalGpuW, $0.id) < ($0.totalGpuW, $1.id) }
         case .cpu:    list.sorted { ($1.totalCpuMs, $0.id) < ($0.totalCpuMs, $1.id) }
         case .memory: list.sorted { ($1.totalMem, $0.id) < ($0.totalMem, $1.id) }
         case .name:   list.sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
@@ -374,6 +395,8 @@ struct AppSection: View {
             procGrid(
                 name: Text("Name"),
                 power: Text("Power"),
+                gpu: Text("GPU")
+                    .help("The app's share of GPU power, split by GPU time. Included in Power."),
                 cpu: Text("CPU ms/s"),
                 count: Text("Procs"),
                 mem: Text("Memory")
@@ -401,12 +424,13 @@ struct AppSection: View {
 
     // MARK: - Shared column grid
 
-    private func procGrid<N: View, P: View, C: View, K: View, M: View>(
-        name: N, power: P, cpu: C, count: K, mem: M
+    private func procGrid<N: View, P: View, G: View, C: View, K: View, M: View>(
+        name: N, power: P, gpu: G, cpu: C, count: K, mem: M
     ) -> some View {
         HStack(spacing: 0) {
             name.frame(maxWidth: .infinity, alignment: .leading)
             power.frame(width: 72, alignment: .trailing)
+            gpu  .frame(width: 72, alignment: .trailing)
             cpu  .frame(width: 72, alignment: .trailing)
             count.frame(width: 48, alignment: .trailing)
             mem  .frame(width: 72, alignment: .trailing)
@@ -419,6 +443,7 @@ struct AppSection: View {
         procGrid(
             name: Text(app.id).fontWeight(.medium).lineLimit(1).truncationMode(.tail),
             power: energyText(app.totalEnergyW, available: app.hasEnergy),
+            gpu: gpuText(app.totalGpuW),
             cpu: Text(String(format: "%.0f", app.totalCpuMs)),
             count: Text("\(app.procs.count)"),
             mem: Text(formatMem(app.totalMem))
@@ -439,6 +464,7 @@ struct AppSection: View {
         procGrid(
             name: Text(proc.name).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary),
             power: energyText(proc.energyW, available: proc.hasEnergy),
+            gpu: gpuText(proc.gpuW),
             cpu: Text(String(format: "%.1f", proc.cpuMs)),
             count: Text("\(proc.threads)").foregroundStyle(.secondary),
             mem: Text(formatMem(proc.mem))
@@ -452,6 +478,7 @@ struct AppSection: View {
         procGrid(
             name: Text(proc.name).lineLimit(1).truncationMode(.middle),
             power: energyText(proc.energyW, available: proc.hasEnergy),
+            gpu: gpuText(proc.gpuW),
             cpu: Text(String(format: "%.1f", proc.cpuMs)),
             count: Text("\(proc.threads)").foregroundStyle(.secondary),
             mem: Text(formatMem(proc.mem))
@@ -470,6 +497,11 @@ struct AppSection: View {
 }
 
 // MARK: - Helpers
+
+/// A process's GPU share; blank rather than "0 mW" for the many that never touch the GPU.
+func gpuText(_ watts: Double) -> Text {
+    watts >= 0.001 ? Text(formatWatts(watts)).foregroundStyle(.purple) : Text("")
+}
 
 @ViewBuilder
 func energyText(_ watts: Double, available: Bool) -> some View {

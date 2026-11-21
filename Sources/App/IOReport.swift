@@ -31,6 +31,9 @@ final class IOReportPower {
         var gpuW: Double?
         var aneW: Double?
         var dramW: Double?
+        /// The rest of the chip: what the package counter holds beyond the four above
+        /// (display controller, video and camera blocks, I/O).
+        var socOtherW: Double?
     }
 
     /// Watts seen in one sample from one source, keyed by component. A component the source
@@ -52,6 +55,11 @@ final class IOReportPower {
             reading.cpuW = cpu
             reading.aneW = clpc[CLPCEnergy.ane]
             if let dram = clpc[CLPCEnergy.dram] { reading.dramW = dram + (clpc[CLPCEnergy.dcs] ?? 0) }
+            // Subtract CLPC's own figures, GPU included: they cover exactly the package's interval.
+            if let package = clpc[CLPCEnergy.package] {
+                let parts = [CLPCEnergy.cpu, CLPCEnergy.gpu, CLPCEnergy.ane, CLPCEnergy.dram, CLPCEnergy.dcs]
+                reading.socOtherW = max(0, package - parts.reduce(0) { $0 + (clpc[$1] ?? 0) })
+            }
         } else if !energyModelFreezes {
             reading.cpuW = energyModel.cpu
             reading.aneW = energyModel.ane

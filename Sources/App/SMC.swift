@@ -86,6 +86,13 @@ final class SMC {
         return Self.celsius(bytes: bytes, type: type)
     }
 
+    /// Read a power rail in watts. Rails are `flt ` like the temperatures.
+    func watts(_ key: String) -> Float? {
+        guard let (b, type) = read(key), type == "flt " else { return nil }
+        let value = Float(bitPattern: UInt32(b.0) | UInt32(b.1) << 8 | UInt32(b.2) << 16 | UInt32(b.3) << 24)
+        return value.isFinite && value >= 0 && value < 1000 ? value : nil
+    }
+
     /// Read the first 4 bytes of an SMC key, along with its four-character type code.
     private func read(_ key: String) -> (bytes: (UInt8, UInt8, UInt8, UInt8), type: String)? {
         var inp = Param(), out = Param()

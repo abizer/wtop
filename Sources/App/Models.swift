@@ -10,7 +10,11 @@ struct ProcUsage: Identifiable, Sendable {
     let appGroup: String
     let isUserApp: Bool     // uid ≥ 500
     var cpuMs: Double       // CPU milliseconds per wall-clock second (1000 = one full core)
+    /// CPU energy the kernel charged to the process, plus `gpuW`.
     var energyW: Double
+    /// The process's share of GPU power: GPU watts split by GPU time. An apportionment,
+    /// not a measurement — it assumes every millisecond of GPU time costs the same.
+    var gpuW: Double
     let hasEnergy: Bool
     let threads: Int
     let mem: UInt64
@@ -22,6 +26,7 @@ struct AppUsage: Identifiable, Sendable {
     let procs: [ProcUsage]
     let totalCpuMs: Double
     let totalEnergyW: Double
+    let totalGpuW: Double
     let totalMem: UInt64
     let hasEnergy: Bool
     let isUserApp: Bool
@@ -31,6 +36,7 @@ struct AppUsage: Identifiable, Sendable {
         self.procs = procs
         totalCpuMs = procs.reduce(0) { $0 + $1.cpuMs }
         totalEnergyW = procs.reduce(0) { $0 + $1.energyW }
+        totalGpuW = procs.reduce(0) { $0 + $1.gpuW }
         totalMem = procs.reduce(0) { $0 + $1.mem }
         hasEnergy = procs.contains(where: \.hasEnergy)
         isUserApp = procs.first?.isUserApp ?? false
@@ -42,6 +48,7 @@ struct AppUsage: Identifiable, Sendable {
             var proc = proc
             proc.cpuMs = 0
             proc.energyW = 0
+            proc.gpuW = 0
             return proc
         })
     }
@@ -73,7 +80,30 @@ struct PowerReading: Sendable {
     var gpuW: Double?
     var aneW: Double?
     var dramW: Double?         // DRAM + DCS + AMCC (memory subsystem)
+    var socOtherW: Double?     // rest of the chip (package total minus the four above)
     var hasIOReport: Bool = false
+    /// Display backlight, from the SMC. nil on a Mac without a built-in display.
+    var displayW: Double?
+
+    /// Fills what IOReport couldn't with SMC rails that were measured against the CLPC
+    /// counters on an M3 Max: `PPSC` tracks DRAM + DCS and `PHPS` the whole package, each
+    /// within a few percent across CPU, GPU and memory loads. Other chips may not have them.
+    mutating func fillGaps(memoryRailW: Double?, packageRailW: Double?) {
+        if dramW == nil { dramW = memoryRailW }
+        if socOtherW == nil, let packageRailW, let cpuW, let gpuW, let aneW, let dramW {
+            socOtherW = max(0, packageRailW - cpuW - gpuW - aneW - dramW)
+        }
+    }
+
+    /// System power no sensor accounts for: SSD, radios, the panel's electronics, speakers,
+    /// conversion losses. nil unless the whole chip is measured, since otherwise the
+    /// remainder would silently include part of it.
+    var unattributedW: Double? {
+        guard systemW > 0, let cpuW, let gpuW, let aneW, let dramW, let socOtherW else { return nil }
+        // The system figure is a slower-moving telemetry value, so a load step can briefly
+        // put the parts above the whole.
+        return max(0, systemW - cpuW - gpuW - aneW - dramW - socOtherW - (displayW ?? 0))
+    }
 }
 
 enum ThermalLevel: String, Sendable {

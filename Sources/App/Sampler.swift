@@ -28,6 +28,7 @@ actor Sampler {
     private let helper = HelperClient()
     private let smc: SMC?
     private let ioReport: IOReportPower?
+    private let gpuClients = GPUClients()
     private let eCoreCount: Int
 
     // Processes
@@ -72,9 +73,11 @@ actor Sampler {
 
     func sample() async -> Snapshot {
         var snapshot = Snapshot()
-        (snapshot.apps, snapshot.helper) = await sampleProcesses()
-        snapshot.cores = sampleCores()
         snapshot.power = samplePower()
+        // GPU power is split between processes by the GPU time each was given.
+        let gpuShares = snapshot.power.gpuW.flatMap { watts in gpuClients?.shares().mapValues { $0 * watts } } ?? [:]
+        (snapshot.apps, snapshot.helper) = await sampleProcesses(gpuWatts: gpuShares)
+        snapshot.cores = sampleCores()
         snapshot.temps = sampleTemps()
         snapshot.thermalLevel = thermalLevel()
         snapshot.memUsedGB = memoryUsedGB()
@@ -84,7 +87,7 @@ actor Sampler {
 
     // MARK: - Processes
 
-    private func sampleProcesses() async -> (apps: [AppUsage], helper: HelperStatus) {
+    private func sampleProcesses(gpuWatts: [Int32: Double]) async -> (apps: [AppUsage], helper: HelperStatus) {
         // Helper sees every process; without it we only see the user's own.
         let privileged = await helper.processes()
         let records = privileged ?? ProcessRecord.snapshot()
@@ -108,7 +111,8 @@ actor Sampler {
             else { continue }
 
             let cpuMs = Double(cpu - last.cpu) * nanosecondsPerTick / 1e6 / elapsed
-            let energyW = Double(record.energyNJ - last.energy) / 1e9 / elapsed
+            let gpuW = gpuWatts[record.pid] ?? 0
+            let energyW = Double(record.energyNJ - last.energy) / 1e9 / elapsed + gpuW
             guard cpuMs > 1 || energyW > 0.001 else { continue }
 
             let name = record.path.isEmpty
@@ -118,7 +122,7 @@ actor Sampler {
             active[group, default: []].append(ProcUsage(
                 id: record.pid, name: name, appGroup: group,
                 isUserApp: record.uid >= 500,
-                cpuMs: cpuMs, energyW: energyW, hasEnergy: record.energyNJ > 0,
+                cpuMs: cpuMs, energyW: energyW, gpuW: gpuW, hasEnergy: record.energyNJ > 0 || gpuW > 0,
                 threads: Int(record.threads), mem: record.memResident
             ))
         }
@@ -228,8 +232,13 @@ actor Sampler {
             reading.gpuW = soc.gpuW
             reading.aneW = soc.aneW
             reading.dramW = soc.dramW
+            reading.socOtherW = soc.socOtherW
             reading.hasIOReport = true
         }
+        // PDBR is the backlight rail: it follows the brightness slider and nothing else.
+        reading.displayW = smc?.watts("PDBR").map(Double.init)
+        reading.fillGaps(memoryRailW: smc?.watts("PPSC").map(Double.init),
+                         packageRailW: smc?.watts("PHPS").map(Double.init))
         return reading
     }
 

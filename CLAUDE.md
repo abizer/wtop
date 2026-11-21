@@ -33,6 +33,7 @@ Sources/
     SMC.swift                SMC reader (temperatures)
     IOReport.swift           IOReport private framework (CPU/GPU/ANE/DRAM)
     CLPC.swift               AppleCLPC energy counter IDs — the macOS 27 source for CPU/ANE/DRAM
+    GPUClients.swift         Per-process GPU time from the IO registry (splits GPU watts between apps)
     HelperClient.swift       actor — XPC client with retry backoff
   Helper/                 ← Privileged daemon (root, on-demand via launchd)
     main.swift               XPC listener; replies with ProcessRecord.snapshot()
@@ -108,6 +109,10 @@ The bundle version comes from the tag: `support/make-app.sh <version>` stamps `C
 |------|-----|-------|
 | System/battery power | IOKit `AppleSmartBattery` → `PowerTelemetryData.SystemLoad` | No |
 | CPU/GPU/ANE/DRAM watts | IOReport `Energy Model` (macOS 27: `CLPC` counters for CPU/ANE/DRAM) via `/usr/lib/libIOReport.dylib` | No |
+| Rest of the SoC | CLPC `Package Energy` minus CLPC's CPU/GPU/ANE/DRAM/DCS (macOS 27 only) | No |
+| Display backlight | SMC `PDBR` (verified: follows the brightness slider, 0.2 W at 10% → 10.5 W at 100% on a 16" M3 Max) | No |
+| Everything else | System minus all of the above (`PowerReading.unattributedW`), clamped at 0 | No |
+| Per-process GPU share | IO registry: `AppUsage[].accumulatedGPUTime` (ns) on each child of `IOAccelerator`, pid from `IOUserClientCreator` | No |
 | Per-process energy | `rusage_info_v6.ri_energy_nj` via `proc_pid_rusage` | System procs: yes |
 | Per-process CPU/mem | `proc_pidinfo` / `PROC_PIDTASKALLINFO` | System procs: yes |
 | CPU core utilization | Mach `host_processor_info` / `PROCESSOR_CPU_LOAD_INFO` | No |
@@ -128,6 +133,12 @@ The bundle version comes from the tag: `support/make-app.sh <version>` stamps `C
 **IOKit signed numbers:** `InstantAmperage` etc. are signed CFNumbers that `ioreg` prints as huge unsigned values. Cast `as? Int`; `as? UInt64` returns nil for every negative value (i.e. whenever the battery is discharging).
 
 **macOS 27 freezes the Energy Model:** without an Apple entitlement, the power manager's `Energy Model` channels (CPU, ANE, DRAM, DISP… — all of `AppleT60xxPMGR`) sit at a constant value for minutes and then catch up in one jump; only `GPU Energy` (AGX driver) stays live. A reboot doesn't help. On 27+ CPU/ANE/DRAM are therefore read from AppleCLPC's `Energy Counters` instead (`CLPC.swift`): unpublished channels subscribed by hard-coded per-chip report IDs, table ported from macmon and generated from 27.2. A chip or OS major missing from the table shows "—" — never the Energy Model value, which would be a false zero or a spike of hundreds of watts. If the cards go "—" after an OS update, the IDs moved: refresh the table from macmon's `src/clpc.rs`.
+
+**SMC power rails (M3 Max, measured against CLPC through idle / P-cores / E-cores / GPU / memory / SSD / dimmed phases):** `PZD1` = DRAM, `PPSC` = DRAM + DCS, `PHPS` ≈ `PZC0` ≈ `PZC1` = whole SoC package (all within ~2%), `PDBR` = backlight, `Pb0f` = `PPBR` = battery. `PC10/12/20/22` are GPU supply rails and `PC02/PC42` the two P-clusters, but their sums don't match CLPC (58 W vs 45 W GPU; 10 W vs 15 W CPU) — don't display them. `PHPC` is NOT SoC power (82 W when the package is 51 W). `PSVR`, `PE0b`, `PMVC`, `P5SR`, `PR0b`, `PFLR` rise with load but are unidentified. Only `PPSC`/`PHPS` are used, as gap-fillers (`PowerReading.fillGaps`), and only this one chip is verified.
+
+**System vs chip under GPU load:** a heavy Metal load raised system power by 84 W but the CLPC package by only 50 W. The difference shows up in "Everything Else". Unknown whether that is conversion loss or the modelled counters under-reporting GPU power.
+
+**Per-process power is CPU energy + a GPU share:** `ri_energy_nj` covers CPU only. `ProcUsage.gpuW` = GPU watts × the process's fraction of GPU time that tick; `energyW` includes it. There is no per-process signal for DRAM, display or anything else — a memory-copy load and a pure CPU load draw the same DRAM power.
 
 **Wire format is frozen:** an installed helper is only replaced when the user reinstalls it, so `ProcessRecord.encode/decode` must stay byte-compatible (there is a test pinning the layout). The XPC selector `getProcessDataWithReply:` likewise.
 

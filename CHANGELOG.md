@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+New:
+
+- **The power breakdown now adds up to the system figure.** Three new cards: Display (backlight, from the SMC), Other SoC (the rest of the chip, from the CLPC package counter; macOS 27), and Everything Else (what no sensor accounts for).
+- **Per-app GPU power.** A new GPU column splits the GPU's watts between apps by the GPU time each was given, and an app's Power now includes it. It is an apportionment, not a measurement.
+- On chips without known CLPC IDs, DRAM and Other SoC fall back to SMC rails (`PPSC`, `PHPS`) that were checked against the CLPC counters on an M3 Max.
+- Temperatures are labelled °C.
+
 Accuracy — several numbers on screen were wrong:
 
 - **CPU ms/s was ~42× too low.** `proc_pidinfo` reports CPU time in Mach ticks (125/3 ns on Apple Silicon), not nanoseconds. A fully pinned core now reads ~1000 ms/s.

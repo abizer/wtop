@@ -33,6 +33,23 @@ struct PowerSection: View {
                 }
             }
 
+            // Where the rest of the system figure goes. With the row above, these add up to it.
+            if power.socOtherW != nil || power.displayW != nil {
+                HStack(spacing: 10) {
+                    if let socOther = power.socOtherW {
+                        PowerCard("Other SoC", watts: socOther, color: .indigo,
+                                  help: "The rest of the chip: display controller, video and camera blocks, I/O.")
+                    }
+                    if let display = power.displayW {
+                        PowerCard("Display", watts: display, color: .yellow, help: "The display backlight.")
+                    }
+                    if let unattributed = power.unattributedW {
+                        PowerCard("Everything Else", watts: unattributed, color: .gray,
+                                  help: "System power no sensor accounts for: SSD, Wi-Fi and Bluetooth, the display's electronics, speakers, and power-conversion losses. It grows under heavy GPU load, when the system draws more than the chip's own counters report.")
+                    }
+                }
+            }
+
             // Sparkline
             if history.count > 2 {
                 Sparkline(values: history, color: .orange)
@@ -47,7 +64,7 @@ struct PowerSection: View {
                 ForEach(temps) { t in
                     HStack(spacing: 2) {
                         Text(t.label).foregroundStyle(.secondary)
-                        Text(String(format: "%.0f°", t.celsius))
+                        Text(String(format: "%.0f°C", t.celsius))
                     }
                     .font(.caption)
                 }
@@ -77,12 +94,14 @@ struct PowerSection: View {
 
 struct PowerCard: View {
     let label: String
-    let watts: Double
+    /// nil when the sensor exists but isn't reporting — shown as a dash, never as zero.
+    let watts: Double?
     let color: Color
     let subtitle: String?
+    let help: String
 
-    init(_ label: String, watts: Double, color: Color, subtitle: String? = nil) {
-        self.label = label; self.watts = watts; self.color = color; self.subtitle = subtitle
+    init(_ label: String, watts: Double?, color: Color, subtitle: String? = nil, help: String = "") {
+        self.label = label; self.watts = watts; self.color = color; self.subtitle = subtitle; self.help = help
     }
 
     var body: some View {
@@ -90,11 +109,18 @@ struct PowerCard: View {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(formatWatts(watts))
-                .font(.system(.title3, design: .rounded, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(color)
-                .contentTransition(.numericText(value: watts))
+            if let watts {
+                Text(formatWatts(watts))
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(color)
+                    .contentTransition(.numericText(value: watts))
+            } else {
+                Text("—")
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .help("macOS doesn't give wtop a live energy counter for this on this Mac, so there is no reading to show.")
+            }
             if let sub = subtitle {
                 Text(sub).font(.caption2).foregroundStyle(.tertiary)
             }
@@ -102,6 +128,8 @@ struct PowerCard: View {
         .frame(maxWidth: .infinity, minHeight: 56)
         .padding(.vertical, 10)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .help(help)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -113,36 +141,21 @@ struct Sparkline: View {
 
     var body: some View {
         GeometryReader { geo in
-            let maxV = values.max() ?? 1
-            let minV = values.min() ?? 0
-            let range = max(maxV - minV, 0.1)
             let w = geo.size.width
             let h = geo.size.height
+            let line = Self.points(for: values, width: w, height: h)
 
             // Filled area
             Path { path in
-                for (i, v) in values.enumerated() {
-                    let x = w * Double(i) / max(Double(values.count - 1), 1)
-                    let y = h * (1 - (v - minV) / range) * 0.85 + h * 0.075
-                    if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                    else { path.addLine(to: CGPoint(x: x, y: y)) }
-                }
+                path.addLines(line)
                 path.addLine(to: CGPoint(x: w, y: h))
                 path.addLine(to: CGPoint(x: 0, y: h))
                 path.closeSubpath()
             }
             .fill(color.opacity(0.1))
 
-            // Line
-            Path { path in
-                for (i, v) in values.enumerated() {
-                    let x = w * Double(i) / max(Double(values.count - 1), 1)
-                    let y = h * (1 - (v - minV) / range) * 0.85 + h * 0.075
-                    if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                    else { path.addLine(to: CGPoint(x: x, y: y)) }
-                }
-            }
-            .stroke(color.opacity(0.6), lineWidth: 1.5)
+            Path { $0.addLines(line) }
+                .stroke(color.opacity(0.6), lineWidth: 1.5)
 
             // Current value label
             if let last = values.last {
@@ -154,6 +167,22 @@ struct Sparkline: View {
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 3))
                     .position(x: w - 30, y: 10)
             }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("System power history")
+        .accessibilityValue(values.last.map(formatWatts) ?? "")
+    }
+
+    /// Scales the series to the frame, leaving 7.5% headroom above and below.
+    private static func points(for values: [Double], width: Double, height: Double) -> [CGPoint] {
+        let low = values.min() ?? 0
+        let spread = (values.max() ?? low) - low
+        let step = width / Double(max(values.count - 1, 1))
+        return values.enumerated().map { index, value in
+            // A flat series sits mid-height rather than hugging the floor.
+            let level = spread > 0.1 ? (value - low) / spread : 0.5
+            return CGPoint(x: step * Double(index),
+                           y: height * (1 - level) * 0.85 + height * 0.075)
         }
     }
 }
@@ -261,6 +290,7 @@ struct CoreBar: View {
 
 enum SortField: String, CaseIterable {
     case power = "Power"
+    case gpu = "GPU"
     case cpu = "CPU"
     case memory = "Memory"
     case name = "Name"
@@ -279,71 +309,53 @@ struct AppSection: View {
     @State private var sortBy: SortField = .power
     @State private var filter: ProcessFilter = .all
     @State private var search: String = ""
-    @State private var cachedOrder: [String] = []  // stable ordering cache
+    /// Ranking frozen at the last user interaction, so rows don't jump around every tick.
+    @State private var frozenOrder: [String] = []
 
-    private var visible: [AppUsage] {
-        var list = apps
-
-        switch filter {
-        case .all:    break
-        case .apps:   list = list.filter(\.isUserApp)
-        case .system: list = list.filter { !$0.isUserApp }
-        }
-
-        if !search.isEmpty {
-            list = list.filter {
-                $0.id.localizedCaseInsensitiveContains(search) ||
-                $0.procs.contains { $0.name.localizedCaseInsensitiveContains(search) }
+    /// Apps passing the filter and search, in no particular order.
+    private var matching: [AppUsage] {
+        apps.filter { app in
+            switch filter {
+            case .all: true
+            case .apps: app.isUserApp
+            case .system: !app.isUserApp
             }
         }
-
-        // Use cached order for stability — only re-rank when user changes sort/filter/search
-        // New items go to the end; removed items disappear
-        if !cachedOrder.isEmpty {
-            let currentIds = Set(list.map(\.id))
-            let known = cachedOrder.filter { currentIds.contains($0) }
-            let new = list.map(\.id).filter { !known.contains($0) }
-            let order = known + new
-            let lookup = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
-            list = order.compactMap { lookup[$0] }
+        .filter { app in
+            search.isEmpty
+                || app.id.localizedCaseInsensitiveContains(search)
+                || app.procs.contains { $0.name.localizedCaseInsensitiveContains(search) }
         }
-
-        return list
     }
 
-    private func sortedList() -> [AppUsage] {
-        var list = apps
-        switch filter {
-        case .all:    break
-        case .apps:   list = list.filter(\.isUserApp)
-        case .system: list = list.filter { !$0.isUserApp }
-        }
-        if !search.isEmpty {
-            list = list.filter {
-                $0.id.localizedCaseInsensitiveContains(search) ||
-                $0.procs.contains { $0.name.localizedCaseInsensitiveContains(search) }
-            }
-        }
+    private func ranked(_ list: [AppUsage]) -> [AppUsage] {
         switch sortBy {
-        case .power:  list.sort { $0.totalEnergyW != $1.totalEnergyW ? $0.totalEnergyW > $1.totalEnergyW : $0.id < $1.id }
-        case .cpu:    list.sort { $0.totalCpuMs != $1.totalCpuMs ? $0.totalCpuMs > $1.totalCpuMs : $0.id < $1.id }
-        case .memory: list.sort { $0.totalMem != $1.totalMem ? $0.totalMem > $1.totalMem : $0.id < $1.id }
-        case .name:   list.sort { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+        case .power:  list.sorted { ($1.totalEnergyW, $0.id) < ($0.totalEnergyW, $1.id) }
+        case .gpu:    list.sorted { ($1.totalGpuW, $0.id) < ($0.totalGpuW, $1.id) }
+        case .cpu:    list.sorted { ($1.totalCpuMs, $0.id) < ($0.totalCpuMs, $1.id) }
+        case .memory: list.sorted { ($1.totalMem, $0.id) < ($0.totalMem, $1.id) }
+        case .name:   list.sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
         }
-        return list
     }
 
-    /// Re-sort and cache the order (called on user interaction, not on every data update)
+    /// Matching apps in the frozen order; anything that appeared since is ranked and appended.
+    private var visible: [AppUsage] {
+        let matching = matching
+        let byID = Dictionary(matching.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let frozen = Set(frozenOrder)
+        return frozenOrder.compactMap { byID[$0] } + ranked(matching.filter { !frozen.contains($0.id) })
+    }
+
+    /// Re-rank now (called on user interaction, not on every data update).
     private func resort() {
-        cachedOrder = sortedList().map(\.id)
-    }
-
-    private var peak: Double {
-        let maxE = visible.map(\.totalEnergyW).max() ?? 0
-        return max(maxE, 0.001)
+        frozenOrder = ranked(matching).map(\.id)
     }
 
     var body: some View {
+        // Computed once per render — every row needs the list's peak to scale its bar.
+        let visible = visible
+        let peak = max(visible.lazy.map(\.totalEnergyW).max() ?? 0, 0.001)
+
         VStack(alignment: .leading, spacing: 6) {
             // Controls bar
             HStack(spacing: 8) {
@@ -360,29 +372,31 @@ struct AppSection: View {
                 .padding(.vertical, 3)
                 .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 6))
 
-                Picker("", selection: $filter) {
+                Picker("Show", selection: $filter) {
                     ForEach(ProcessFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
                 .frame(width: 180)
 
-                Picker("", selection: $sortBy) {
+                Picker("Sort by", selection: $sortBy) {
                     ForEach(SortField.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .frame(width: 80)
             }
-            .onChange(of: sortBy) { _, _ in resort() }
-            .onChange(of: filter) { _, _ in resort() }
-            .onChange(of: search) { _, _ in resort() }
+            .onChange(of: sortBy) { resort() }
+            .onChange(of: filter) { resort() }
+            .onChange(of: search) { resort() }
             .onAppear { resort() }
 
             // Column header
             procGrid(
                 name: Text("Name"),
                 power: Text("Power"),
+                gpu: Text("GPU")
+                    .help("The app's share of GPU power, split by GPU time. Included in Power."),
                 cpu: Text("CPU ms/s"),
                 count: Text("Procs"),
                 mem: Text("Memory")
@@ -399,10 +413,10 @@ struct AppSection: View {
                             subProcRow(proc)
                         }
                     } label: {
-                        appRow(app)
+                        appRow(app, peak: peak)
                     }
                 } else if let proc = app.procs.first {
-                    flatRow(proc)
+                    flatRow(proc, peak: peak)
                 }
             }
         }
@@ -410,12 +424,13 @@ struct AppSection: View {
 
     // MARK: - Shared column grid
 
-    private func procGrid<N: View, P: View, C: View, K: View, M: View>(
-        name: N, power: P, cpu: C, count: K, mem: M
+    private func procGrid<N: View, P: View, G: View, C: View, K: View, M: View>(
+        name: N, power: P, gpu: G, cpu: C, count: K, mem: M
     ) -> some View {
         HStack(spacing: 0) {
             name.frame(maxWidth: .infinity, alignment: .leading)
             power.frame(width: 72, alignment: .trailing)
+            gpu  .frame(width: 72, alignment: .trailing)
             cpu  .frame(width: 72, alignment: .trailing)
             count.frame(width: 48, alignment: .trailing)
             mem  .frame(width: 72, alignment: .trailing)
@@ -424,10 +439,11 @@ struct AppSection: View {
 
     // MARK: - Rows
 
-    private func appRow(_ app: AppUsage) -> some View {
+    private func appRow(_ app: AppUsage, peak: Double) -> some View {
         procGrid(
             name: Text(app.id).fontWeight(.medium).lineLimit(1).truncationMode(.tail),
             power: energyText(app.totalEnergyW, available: app.hasEnergy),
+            gpu: gpuText(app.totalGpuW),
             cpu: Text(String(format: "%.0f", app.totalCpuMs)),
             count: Text("\(app.procs.count)"),
             mem: Text(formatMem(app.totalMem))
@@ -439,7 +455,7 @@ struct AppSection: View {
             GeometryReader { geo in
                 RoundedRectangle(cornerRadius: 3)
                     .fill(.orange.opacity(0.06))
-                    .frame(width: geo.size.width * min(app.totalEnergyW / max(peak, 0.001), 1))
+                    .frame(width: geo.size.width * min(app.totalEnergyW / peak, 1))
             }
         }
     }
@@ -448,6 +464,7 @@ struct AppSection: View {
         procGrid(
             name: Text(proc.name).lineLimit(1).truncationMode(.middle).foregroundStyle(.secondary),
             power: energyText(proc.energyW, available: proc.hasEnergy),
+            gpu: gpuText(proc.gpuW),
             cpu: Text(String(format: "%.1f", proc.cpuMs)),
             count: Text("\(proc.threads)").foregroundStyle(.secondary),
             mem: Text(formatMem(proc.mem))
@@ -457,10 +474,11 @@ struct AppSection: View {
         .padding(.horizontal, 4)
     }
 
-    private func flatRow(_ proc: ProcUsage) -> some View {
+    private func flatRow(_ proc: ProcUsage, peak: Double) -> some View {
         procGrid(
             name: Text(proc.name).lineLimit(1).truncationMode(.middle),
             power: energyText(proc.energyW, available: proc.hasEnergy),
+            gpu: gpuText(proc.gpuW),
             cpu: Text(String(format: "%.1f", proc.cpuMs)),
             count: Text("\(proc.threads)").foregroundStyle(.secondary),
             mem: Text(formatMem(proc.mem))
@@ -472,13 +490,18 @@ struct AppSection: View {
             GeometryReader { geo in
                 RoundedRectangle(cornerRadius: 3)
                     .fill(.orange.opacity(0.06))
-                    .frame(width: geo.size.width * min(proc.energyW / max(peak, 0.001), 1))
+                    .frame(width: geo.size.width * min(proc.energyW / peak, 1))
             }
         }
     }
 }
 
 // MARK: - Helpers
+
+/// A process's GPU share; blank rather than "0 mW" for the many that never touch the GPU.
+func gpuText(_ watts: Double) -> Text {
+    watts >= 0.001 ? Text(formatWatts(watts)).foregroundStyle(.purple) : Text("")
+}
 
 @ViewBuilder
 func energyText(_ watts: Double, available: Bool) -> some View {

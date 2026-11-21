@@ -22,7 +22,8 @@ The cask downloads a pre-built `.app`, installs it to `/Applications`, strips th
 
 - **System power** — total draw, battery discharge rate, adapter input
 - **SoC breakdown** — CPU, GPU, ANE, DRAM power via IOReport
-- **Per-process energy** — actual watts per app, not just CPU time
+- **Where the rest goes** — display backlight, the rest of the chip, and whatever no sensor accounts for, so the breakdown adds up to the system total
+- **Per-process energy** — actual watts per app, not just CPU time, including each app's share of GPU power
 - **CPU cores** — per-core utilization for E-cluster and P-cluster
 - **Temperatures** — CPU, SSD, battery via SMC sensors
 - **App grouping** — Brave's 12 helper processes collapse into one row
@@ -46,10 +47,10 @@ wtop reads from five macOS subsystems, none of which require third-party depende
 | What | How |
 |------|-----|
 | System power | IOKit `AppleSmartBattery` registry |
-| CPU/GPU/ANE/DRAM | IOReport `Energy Model` channels via `/usr/lib/libIOReport.dylib` |
+| CPU/GPU/ANE/DRAM | IOReport `Energy Model` channels via `/usr/lib/libIOReport.dylib` (CLPC energy counters on macOS 27, where the Energy Model freezes) |
 | Per-process energy | `proc_pid_rusage` with `rusage_info_v6.ri_energy_nj` |
 | CPU core load | Mach `host_processor_info` |
-| Temperatures | SMC keys via IOKit (`sp78` fixed-point) |
+| Temperatures | SMC keys via IOKit (little-endian `flt ` on Apple Silicon) |
 
 The privileged helper runs **on-demand** — launchd starts it when the app opens an XPC connection, and it exits 30 seconds after the app closes. It never runs in the background.
 
@@ -59,7 +60,7 @@ The privileged helper runs **on-demand** — launchd starts it when the app open
 Sources/
   App/         SwiftUI app (runs as user)
   Helper/      Privileged daemon (root, on-demand via launchd + XPC)
-  Shared/      XPC protocol definition
+  Shared/      XPC protocol, process-table reader and wire format (linked into both)
 ```
 
 Without root, `proc_pidinfo` can't see system processes. The helper provides full process data for all PIDs over XPC when installed. Without it, user apps are still fully visible.
@@ -75,7 +76,7 @@ just install          # .app → ~/Applications
 just install-helper   # privileged daemon (needs sudo)
 ```
 
-Requires Swift 5.9+ and macOS 14+.
+Requires Swift 6.0+ and macOS 14+. Run the tests with `just test`.
 
 ## Uninstall
 
@@ -95,7 +96,7 @@ just uninstall
 
 - Apple Silicon Mac (M1/M2/M3/M4)
 - macOS 14 Sonoma or later
-- Swift 5.9+ (for building from source)
+- Swift 6.0+ (for building from source)
 
 ## License
 

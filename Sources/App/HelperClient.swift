@@ -1,126 +1,56 @@
 import Foundation
+import WtopShared
 
-/// Raw process data from the privileged helper.
-struct HelperProcessEntry {
-    let pid: Int32
-    let uid: UInt32
-    let cpuUser: UInt64
-    let cpuSystem: UInt64
-    let energyNJ: UInt64
-    let threads: Int32
-    let memResident: UInt64
-    let path: String
-}
-
-/// Client for the privileged wtop-helper daemon.
-@Observable
-@MainActor
-final class HelperClient {
-    enum Status: String {
-        case notInstalled = "Not Installed"
-        case running = "Running"
-        case checking = "Checking..."
-    }
-
-    private(set) var status: Status = .checking
+/// Connection to the privileged wtop-helper daemon.
+///
+/// There is no separate "is it installed?" probe: every fetch is the probe.
+/// A failure backs off for a few seconds and then tries again, so a helper
+/// installed (or restarted) while the app is open is picked up on its own.
+actor HelperClient {
     private var connection: NSXPCConnection?
-    private let serviceName = "me.abizer.wtop.helper"
+    private var connectionID = 0
+    private var retryAt = ContinuousClock.now
+    private let retryDelay: Duration = .seconds(10)
 
-    init() {
-        checkConnection()
-    }
+    /// Every process on the system, or nil when the helper can't be reached.
+    func processes() async -> [ProcessRecord]? {
+        guard ContinuousClock.now >= retryAt else { return nil }
 
-    func checkConnection() {
-        status = .checking
-        let conn = getConnection()
-        let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] _ in
-            Task { @MainActor in self?.status = .notInstalled }
-        }
-        if let helper = proxy as? HelperProtocolClient {
-            helper.getProcessData { [weak self] _ in
-                Task { @MainActor in self?.status = .running }
+        let connection = self.connection ?? connect()
+        // NSXPC calls exactly one of the two blocks, exactly once.
+        let payload: Data? = await withCheckedContinuation { continuation in
+            let proxy = connection.remoteObjectProxyWithErrorHandler { _ in
+                continuation.resume(returning: nil)
             }
-        } else {
-            status = .notInstalled
-        }
-    }
-
-    /// Fetch all process data from the privileged helper.
-    func fetchProcessData() async -> [HelperProcessEntry]? {
-        guard status == .running else { return nil }
-
-        let conn = getConnection()
-        let proxy = conn.remoteObjectProxyWithErrorHandler { [weak self] _ in
-            Task { @MainActor in self?.status = .notInstalled }
-        }
-        guard let helper = proxy as? HelperProtocolClient else { return nil }
-
-        return await withCheckedContinuation { cont in
-            helper.getProcessData { data in
-                cont.resume(returning: Self.decode(data))
+            guard let helper = proxy as? HelperProtocol else {
+                continuation.resume(returning: nil)
+                return
             }
+            helper.getProcessData { continuation.resume(returning: $0) }
         }
+
+        guard let payload, let records = ProcessRecord.decode(payload) else {
+            retryAt = .now + retryDelay
+            return nil
+        }
+        return records
     }
 
-    // MARK: - Decode
-
-    private static func decode(_ data: Data) -> [HelperProcessEntry] {
-        guard data.count >= 4 else { return [] }
-        var offset = 0
-
-        func read<T>(_ type: T.Type) -> T {
-            let val = data[offset..<offset+MemoryLayout<T>.size].withUnsafeBytes { $0.loadUnaligned(as: T.self) }
-            offset += MemoryLayout<T>.size
-            return val
+    private func connect() -> NSXPCConnection {
+        connectionID += 1
+        let id = connectionID
+        let connection = NSXPCConnection(machServiceName: helperMachServiceName)
+        connection.remoteObjectInterface = NSXPCInterface(with: HelperProtocol.self)
+        connection.invalidationHandler = { [weak self] in
+            Task { await self?.discard(id) }
         }
-
-        let count = Int(read(UInt32.self))
-        var entries: [HelperProcessEntry] = []
-        entries.reserveCapacity(count)
-
-        for _ in 0..<count {
-            guard offset < data.count else { break }
-            let pid = read(Int32.self)
-            let uid = read(UInt32.self)
-            let cpuUser = read(UInt64.self)
-            let cpuSystem = read(UInt64.self)
-            let energyNJ = read(UInt64.self)
-            let threads = read(Int32.self)
-            let memResident = read(UInt64.self)
-            let pathLen = Int(read(UInt16.self))
-            let path: String
-            if pathLen > 0, offset + pathLen <= data.count {
-                path = String(bytes: data[offset..<offset+pathLen], encoding: .utf8) ?? ""
-                offset += pathLen
-            } else {
-                path = ""
-            }
-            entries.append(HelperProcessEntry(
-                pid: pid, uid: uid, cpuUser: cpuUser, cpuSystem: cpuSystem,
-                energyNJ: energyNJ, threads: threads, memResident: memResident, path: path
-            ))
-        }
-        return entries
+        connection.resume()
+        self.connection = connection
+        return connection
     }
 
-    // MARK: - Connection
-
-    private func getConnection() -> NSXPCConnection {
-        if let connection { return connection }
-        let conn = NSXPCConnection(machServiceName: serviceName)
-        conn.remoteObjectInterface = NSXPCInterface(with: HelperProtocolClient.self)
-        conn.invalidationHandler = { [weak self] in
-            Task { @MainActor in
-                self?.connection = nil
-                self?.status = .notInstalled
-            }
-        }
-        conn.resume()
-        connection = conn
-        return conn
+    /// An invalidated connection is dead for good; the next fetch builds a fresh one.
+    private func discard(_ id: Int) {
+        if id == connectionID { connection = nil }
     }
-}
-
-@objc protocol HelperProtocolClient {
-    func getProcessData(reply: @escaping (Data) -> Void)
 }

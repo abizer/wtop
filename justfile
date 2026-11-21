@@ -1,7 +1,5 @@
 set positional-arguments
 
-tap_repo := "../homebrew-tap"
-
 # A machine with only the Command Line Tools (no Xcode) can't build against the macOS 27
 # SDK: SwiftUI's @State became a macro there and its compiler plugin ships with Xcode
 # alone. The same toolchain also intermittently drops the Swift Testing plugin from the

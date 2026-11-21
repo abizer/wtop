@@ -3,7 +3,7 @@ import IOKit
 
 /// Reads Apple SMC (System Management Controller) sensors.
 /// Struct layout must exactly match the kernel's SMCParamStruct (80 bytes on arm64).
-final class SMC: @unchecked Sendable {
+final class SMC {
 
     // MARK: - Kernel struct (80 bytes — verified via brute-force probing)
 
@@ -61,26 +61,33 @@ final class SMC: @unchecked Sendable {
 
     deinit { if conn != 0 { IOServiceClose(conn) } }
 
-    /// Read a 4-char SMC key as a big-endian IEEE 754 float (type `flt `).
-    func float(_ key: String) -> Float? {
-        guard let b = read(key) else { return nil }
-        let bits = UInt32(b.0) << 24 | UInt32(b.1) << 16 | UInt32(b.2) << 8 | UInt32(b.3)
-        let f = Float(bitPattern: bits)
-        guard f.isFinite else { return nil }
-        return f
+    /// Decode a raw temperature reading in °C, or nil if the type isn't a temperature
+    /// encoding we know or the value is physically implausible.
+    ///
+    /// The key's declared type decides the encoding — guessing produces numbers that look
+    /// like temperatures but aren't. Apple Silicon reports `flt ` (little-endian IEEE 754);
+    /// Intel-era keys were `sp78` (big-endian signed 8.8 fixed point).
+    static func celsius(bytes b: (UInt8, UInt8, UInt8, UInt8), type: String) -> Float? {
+        let value: Float
+        switch type {
+        case "flt ":
+            value = Float(bitPattern: UInt32(b.0) | UInt32(b.1) << 8 | UInt32(b.2) << 16 | UInt32(b.3) << 24)
+        case "sp78":
+            value = Float(Int16(bitPattern: UInt16(b.0) << 8 | UInt16(b.1))) / 256
+        default:
+            return nil
+        }
+        return value.isFinite && value > 0 && value < 150 ? value : nil
     }
 
-    /// Read a signed 7.8 fixed-point temperature (type `sp78`), returns °C.
+    /// Read a temperature sensor in °C.
     func temp(_ key: String) -> Float? {
-        guard let b = read(key) else { return nil }
-        let raw = Int16(Int16(b.0) << 8 | Int16(b.1))
-        let c = Float(raw) / 256.0
-        guard c > 5 && c < 130 else { return nil }
-        return c
+        guard let (bytes, type) = read(key) else { return nil }
+        return Self.celsius(bytes: bytes, type: type)
     }
 
-    /// Read first 4 bytes of any SMC key.
-    private func read(_ key: String) -> (UInt8, UInt8, UInt8, UInt8)? {
+    /// Read the first 4 bytes of an SMC key, along with its four-character type code.
+    private func read(_ key: String) -> (bytes: (UInt8, UInt8, UInt8, UInt8), type: String)? {
         var inp = Param(), out = Param()
         inp.key = fourCC(key)
 
@@ -97,7 +104,9 @@ final class SMC: @unchecked Sendable {
         out = Param()
         guard call(&inp, &out) else { return nil }
 
-        return (out.bytes.0, out.bytes.1, out.bytes.2, out.bytes.3)
+        let code = inp.keyInfo.dataType
+        let type = String(decoding: [24, 16, 8, 0].map { UInt8(truncatingIfNeeded: code >> $0) }, as: UTF8.self)
+        return ((out.bytes.0, out.bytes.1, out.bytes.2, out.bytes.3), type)
     }
 
     private func call(_ input: inout Param, _ output: inout Param) -> Bool {

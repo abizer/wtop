@@ -2,7 +2,7 @@ import Foundation
 
 /// Reads CPU/GPU/ANE/DRAM power via IOReport private framework (dlopen'd from /usr/lib/libIOReport.dylib).
 /// Returns nil from init if the framework isn't available.
-final class IOReportPower: @unchecked Sendable {
+final class IOReportPower {
 
     private typealias CopyChFn   = @convention(c) (CFString, UnsafeRawPointer?, CFIndex, CFIndex, CFIndex) -> UnsafeRawPointer?
     private typealias SubFn      = @convention(c) (UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer?, CFIndex, UnsafeRawPointer?) -> UnsafeRawPointer?
@@ -21,14 +21,19 @@ final class IOReportPower: @unchecked Sendable {
 
     private let subscription: UnsafeRawPointer
     private let subbedChannels: UnsafeRawPointer
-    private var prevSample: UnsafeRawPointer?
+    private var prevSample: UnsafeRawPointer
+    private var prevTime: ContinuousClock.Instant
 
     struct Reading {
         var cpuW: Double = 0
         var gpuW: Double = 0
         var aneW: Double = 0
         var dramW: Double = 0
-        var otherW: Double = 0
+
+        /// CPU, ANE and DRAM all come from the SoC power manager's counters, which have been
+        /// seen to stop advancing on long-running systems while the GPU driver's keep going.
+        /// A running CPU never uses zero energy, so a zero here means "frozen", not "idle".
+        var powerManagerIsLive: Bool { cpuW > 0 }
     }
 
     init?() {
@@ -65,19 +70,24 @@ final class IOReportPower: @unchecked Sendable {
         subscription = sub
         subbedChannels = subbedPtr ?? mutablePtr
 
-        prevSample = createSample(sub, subbedChannels, nil)
-        guard prevSample != nil else { return nil }
+        guard let first = createSample(sub, subbedChannels, nil) else { return nil }
+        prevSample = first
+        prevTime = .now
     }
 
-    /// Take a new sample and compute delta watts since last call.
-    func sample(interval: Double) -> Reading? {
-        guard let prev = prevSample else { return nil }
+    /// Average watts per component since the previous call.
+    /// The channels count joules, so the divisor is the time that really passed between samples.
+    func sample() -> Reading? {
+        let prev = prevSample
         guard let curr = createSample(subscription, subbedChannels, nil) else { return nil }
+        let now = ContinuousClock.now
+        let interval = (now - prevTime).inSeconds
         // IOReportCreateSamples/CreateSamplesDelta follow the CF Create rule (+1 retained);
         // held as UnsafeRawPointer they're invisible to ARC and must be CFReleased here.
         defer {
             Unmanaged<AnyObject>.fromOpaque(prev).release()
             prevSample = curr
+            prevTime = now
         }
 
         guard let delta = createDelta(prev, curr, nil) else { return nil }
@@ -111,12 +121,8 @@ final class IOReportPower: @unchecked Sendable {
             // Per-component channels (no aggregate available)
             if name.hasPrefix("ANE")  { reading.aneW += watts }
             else if name.hasPrefix("DRAM") || name.hasPrefix("DCS") || name.hasPrefix("AMCC") { reading.dramW += watts }
-            // Skip individual CPU/GPU cores (covered by aggregates above)
-            else if name.contains("CPU") || name.hasPrefix("EACC") || name.hasPrefix("PACC") { /* skip */ }
-            else if name.hasPrefix("GPU") { /* skip */ }
-            else if name.hasPrefix("DISP") || name.hasPrefix("ISP") || name.hasPrefix("AVE") || name.hasPrefix("MSR") {
-                reading.otherW += watts
-            }
+            // Everything else is either a per-core channel the aggregates already cover
+            // or a peripheral (DISP, ISP, AVE, MSR) that has no card in the UI.
             return 0
         }
 

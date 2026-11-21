@@ -2,6 +2,18 @@ set positional-arguments
 
 tap_repo := "../homebrew-tap"
 
+# A machine with only the Command Line Tools (no Xcode) can't build against the macOS 27
+# SDK: SwiftUI's @State became a macro there and its compiler plugin ships with Xcode
+# alone. The same toolchain also intermittently drops the Swift Testing plugin from the
+# compile command. So on CLT, build against the 26 SDK and name the plugin directory.
+clt := "/Library/Developer/CommandLineTools"
+on_clt := `[ "$(xcode-select -p 2>/dev/null)" = /Library/Developer/CommandLineTools ] && echo true || echo false`
+export SDKROOT := if on_clt == "true" { if path_exists(clt / "SDKs/MacOSX26.sdk") == "true" { clt / "SDKs/MacOSX26.sdk" } else { clt / "SDKs/MacOSX.sdk" } } else { `xcrun --show-sdk-path` }
+test_flags := if on_clt == "true" { "-Xswiftc -plugin-path -Xswiftc " + clt / "usr/lib/swift/host/plugins/testing" } else { "" }
+
+# Version of the last release tag, e.g. 0.4.4
+version := `git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo 0.0.0`
+
 default: build
 
 # Build both app and helper
@@ -12,17 +24,13 @@ build:
 build-debug:
     swift build
 
+# Run the test suite (the sampler tests pin a core for a few seconds)
+test:
+    swift test {{test_flags}}
+
 # Build .app bundle with embedded helper
-app: build
-    rm -rf wtop.app
-    mkdir -p wtop.app/Contents/{MacOS,Helpers,Resources}
-    cp .build/release/wtop wtop.app/Contents/MacOS/
-    cp .build/release/wtop-helper wtop.app/Contents/Helpers/
-    cp Info.plist wtop.app/Contents/
-    cp support/me.abizer.wtop.helper.plist wtop.app/Contents/Resources/
-    cp support/install-helper.sh wtop.app/Contents/Resources/
-    codesign --force --sign - wtop.app/Contents/Helpers/wtop-helper
-    codesign --force --sign - wtop.app
+app:
+    support/make-app.sh {{version}}
 
 # Install .app to ~/Applications (user-writable, Spotlight-indexed)
 install: app
@@ -54,17 +62,17 @@ uninstall: uninstall-helper
 run:
     swift build && .build/debug/wtop
 
-# Tag and push — CI handles the rest (tap PR + bottle build)
-release version:
+# Tag and push — CI builds the .app, publishes the release and bumps the cask
+release new_version: test
     #!/bin/bash
     set -euo pipefail
     if ! git diff --quiet HEAD; then
         echo "Error: uncommitted changes. Commit first."
         exit 1
     fi
-    git tag "v{{version}}"
+    git tag "v{{new_version}}"
     git push origin master --tags
-    echo "Tagged v{{version}} — CI will create a tap PR and build bottles"
+    echo "Tagged v{{new_version}} — CI will publish the release and bump the cask"
 
 # Clean build artifacts
 clean:

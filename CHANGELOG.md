@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+Accuracy — several numbers on screen were wrong:
+
+- **CPU ms/s was ~42× too low.** `proc_pidinfo` reports CPU time in Mach ticks (125/3 ns on Apple Silicon), not nanoseconds. A fully pinned core now reads ~1000 ms/s.
+- **Temperatures were noise.** Apple Silicon SMC keys are little-endian floats; they were being decoded as `sp78` fixed-point, producing random values that happened to fall in a plausible range. Now decoded by each key's declared type.
+- **Battery watts read 0 while discharging.** The signed amperage failed an unsigned cast for every negative value.
+- **CPU/GPU/ANE/DRAM watts were wrong at any interval other than 2s** (4× low at 0.5s, 2.5× high at 5s). All rates now divide by measured elapsed time instead of the nominal interval.
+- **Frozen power-manager counters show "—" instead of "0 mW".**
+- Process data from the helper is no longer one tick stale, and apps that go quiet show zero instead of their last reading.
+- WebKit and other `com.apple.*` helpers are no longer grouped under an app called "com".
+
+Reliability:
+
+- **Helper now actually exits when idle.** Its 30s timer was scheduled from an XPC callback queue with no run loop, so it never fired; a second client disconnecting could also strand the first.
+- **"Limited" is no longer sticky** — the app retries the helper every 10s, so installing it while wtop is open just works. A dead helper can no longer hang the sampling loop.
+- Truncated helper replies are rejected instead of crashing the decoder.
+- Single window (`Window` scene) — ⌘N no longer spawns a second monitor, sampler and helper connection.
+
+Internals:
+
+- Swift 6 language mode with strict concurrency. All sampling moved off the main thread into an `actor Sampler`; the main actor only publishes snapshots.
+- `Sources/Shared` is now a real library linked into both executables: one XPC protocol declaration, one process-table reader, one wire codec (previously each was duplicated by hand).
+- First tests: wire-format compatibility with the v0.4 helper, idle timer, SMC decoding, and a live sampler test that pins a core.
+- The process list no longer recomputes its filter and peak once per row per render.
+- Bundle version is stamped from the release tag (it had been stuck at 0.1.0). `support/make-app.sh` is shared by `just app` and CI; CI moves to `macos-26` and runs the tests.
+
+## v0.4.4
+
+- Fixed IOReport sample leak (~100 KB per tick, gigabytes over days); cached the Mach host port, battery service and SMC key info.
+
+## v0.4.1 – v0.4.3
+
+- Release pipeline fixes for the Homebrew cask bump.
+
 ## v0.4.0
 
 - **System processes visible** — helper now provides full process data (CPU, memory, threads, energy, path) for all PIDs, not just energy. System tab shows WindowServer, kernel_task, etc.

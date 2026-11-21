@@ -77,11 +77,12 @@ struct PowerSection: View {
 
 struct PowerCard: View {
     let label: String
-    let watts: Double
+    /// nil when the sensor exists but isn't reporting — shown as a dash, never as zero.
+    let watts: Double?
     let color: Color
     let subtitle: String?
 
-    init(_ label: String, watts: Double, color: Color, subtitle: String? = nil) {
+    init(_ label: String, watts: Double?, color: Color, subtitle: String? = nil) {
         self.label = label; self.watts = watts; self.color = color; self.subtitle = subtitle
     }
 
@@ -90,11 +91,18 @@ struct PowerCard: View {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(formatWatts(watts))
-                .font(.system(.title3, design: .rounded, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(color)
-                .contentTransition(.numericText(value: watts))
+            if let watts {
+                Text(formatWatts(watts))
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(color)
+                    .contentTransition(.numericText(value: watts))
+            } else {
+                Text("—")
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .help("This sensor's energy counter isn't advancing, so there is no reading to show.")
+            }
             if let sub = subtitle {
                 Text(sub).font(.caption2).foregroundStyle(.tertiary)
             }
@@ -102,6 +110,7 @@ struct PowerCard: View {
         .frame(maxWidth: .infinity, minHeight: 56)
         .padding(.vertical, 10)
         .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -113,36 +122,21 @@ struct Sparkline: View {
 
     var body: some View {
         GeometryReader { geo in
-            let maxV = values.max() ?? 1
-            let minV = values.min() ?? 0
-            let range = max(maxV - minV, 0.1)
             let w = geo.size.width
             let h = geo.size.height
+            let line = Self.points(for: values, width: w, height: h)
 
             // Filled area
             Path { path in
-                for (i, v) in values.enumerated() {
-                    let x = w * Double(i) / max(Double(values.count - 1), 1)
-                    let y = h * (1 - (v - minV) / range) * 0.85 + h * 0.075
-                    if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                    else { path.addLine(to: CGPoint(x: x, y: y)) }
-                }
+                path.addLines(line)
                 path.addLine(to: CGPoint(x: w, y: h))
                 path.addLine(to: CGPoint(x: 0, y: h))
                 path.closeSubpath()
             }
             .fill(color.opacity(0.1))
 
-            // Line
-            Path { path in
-                for (i, v) in values.enumerated() {
-                    let x = w * Double(i) / max(Double(values.count - 1), 1)
-                    let y = h * (1 - (v - minV) / range) * 0.85 + h * 0.075
-                    if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                    else { path.addLine(to: CGPoint(x: x, y: y)) }
-                }
-            }
-            .stroke(color.opacity(0.6), lineWidth: 1.5)
+            Path { $0.addLines(line) }
+                .stroke(color.opacity(0.6), lineWidth: 1.5)
 
             // Current value label
             if let last = values.last {
@@ -154,6 +148,22 @@ struct Sparkline: View {
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 3))
                     .position(x: w - 30, y: 10)
             }
+        }
+        .accessibilityElement()
+        .accessibilityLabel("System power history")
+        .accessibilityValue(values.last.map(formatWatts) ?? "")
+    }
+
+    /// Scales the series to the frame, leaving 7.5% headroom above and below.
+    private static func points(for values: [Double], width: Double, height: Double) -> [CGPoint] {
+        let low = values.min() ?? 0
+        let spread = (values.max() ?? low) - low
+        let step = width / Double(max(values.count - 1, 1))
+        return values.enumerated().map { index, value in
+            // A flat series sits mid-height rather than hugging the floor.
+            let level = spread > 0.1 ? (value - low) / spread : 0.5
+            return CGPoint(x: step * Double(index),
+                           y: height * (1 - level) * 0.85 + height * 0.075)
         }
     }
 }
@@ -279,71 +289,52 @@ struct AppSection: View {
     @State private var sortBy: SortField = .power
     @State private var filter: ProcessFilter = .all
     @State private var search: String = ""
-    @State private var cachedOrder: [String] = []  // stable ordering cache
+    /// Ranking frozen at the last user interaction, so rows don't jump around every tick.
+    @State private var frozenOrder: [String] = []
 
-    private var visible: [AppUsage] {
-        var list = apps
-
-        switch filter {
-        case .all:    break
-        case .apps:   list = list.filter(\.isUserApp)
-        case .system: list = list.filter { !$0.isUserApp }
-        }
-
-        if !search.isEmpty {
-            list = list.filter {
-                $0.id.localizedCaseInsensitiveContains(search) ||
-                $0.procs.contains { $0.name.localizedCaseInsensitiveContains(search) }
+    /// Apps passing the filter and search, in no particular order.
+    private var matching: [AppUsage] {
+        apps.filter { app in
+            switch filter {
+            case .all: true
+            case .apps: app.isUserApp
+            case .system: !app.isUserApp
             }
         }
-
-        // Use cached order for stability — only re-rank when user changes sort/filter/search
-        // New items go to the end; removed items disappear
-        if !cachedOrder.isEmpty {
-            let currentIds = Set(list.map(\.id))
-            let known = cachedOrder.filter { currentIds.contains($0) }
-            let new = list.map(\.id).filter { !known.contains($0) }
-            let order = known + new
-            let lookup = Dictionary(uniqueKeysWithValues: list.map { ($0.id, $0) })
-            list = order.compactMap { lookup[$0] }
+        .filter { app in
+            search.isEmpty
+                || app.id.localizedCaseInsensitiveContains(search)
+                || app.procs.contains { $0.name.localizedCaseInsensitiveContains(search) }
         }
-
-        return list
     }
 
-    private func sortedList() -> [AppUsage] {
-        var list = apps
-        switch filter {
-        case .all:    break
-        case .apps:   list = list.filter(\.isUserApp)
-        case .system: list = list.filter { !$0.isUserApp }
-        }
-        if !search.isEmpty {
-            list = list.filter {
-                $0.id.localizedCaseInsensitiveContains(search) ||
-                $0.procs.contains { $0.name.localizedCaseInsensitiveContains(search) }
-            }
-        }
+    private func ranked(_ list: [AppUsage]) -> [AppUsage] {
         switch sortBy {
-        case .power:  list.sort { $0.totalEnergyW != $1.totalEnergyW ? $0.totalEnergyW > $1.totalEnergyW : $0.id < $1.id }
-        case .cpu:    list.sort { $0.totalCpuMs != $1.totalCpuMs ? $0.totalCpuMs > $1.totalCpuMs : $0.id < $1.id }
-        case .memory: list.sort { $0.totalMem != $1.totalMem ? $0.totalMem > $1.totalMem : $0.id < $1.id }
-        case .name:   list.sort { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
+        case .power:  list.sorted { ($1.totalEnergyW, $0.id) < ($0.totalEnergyW, $1.id) }
+        case .cpu:    list.sorted { ($1.totalCpuMs, $0.id) < ($0.totalCpuMs, $1.id) }
+        case .memory: list.sorted { ($1.totalMem, $0.id) < ($0.totalMem, $1.id) }
+        case .name:   list.sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
         }
-        return list
     }
 
-    /// Re-sort and cache the order (called on user interaction, not on every data update)
+    /// Matching apps in the frozen order; anything that appeared since is ranked and appended.
+    private var visible: [AppUsage] {
+        let matching = matching
+        let byID = Dictionary(matching.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let frozen = Set(frozenOrder)
+        return frozenOrder.compactMap { byID[$0] } + ranked(matching.filter { !frozen.contains($0.id) })
+    }
+
+    /// Re-rank now (called on user interaction, not on every data update).
     private func resort() {
-        cachedOrder = sortedList().map(\.id)
-    }
-
-    private var peak: Double {
-        let maxE = visible.map(\.totalEnergyW).max() ?? 0
-        return max(maxE, 0.001)
+        frozenOrder = ranked(matching).map(\.id)
     }
 
     var body: some View {
+        // Computed once per render — every row needs the list's peak to scale its bar.
+        let visible = visible
+        let peak = max(visible.lazy.map(\.totalEnergyW).max() ?? 0, 0.001)
+
         VStack(alignment: .leading, spacing: 6) {
             // Controls bar
             HStack(spacing: 8) {
@@ -360,23 +351,23 @@ struct AppSection: View {
                 .padding(.vertical, 3)
                 .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 6))
 
-                Picker("", selection: $filter) {
+                Picker("Show", selection: $filter) {
                     ForEach(ProcessFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
                 .frame(width: 180)
 
-                Picker("", selection: $sortBy) {
+                Picker("Sort by", selection: $sortBy) {
                     ForEach(SortField.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                 }
                 .labelsHidden()
                 .pickerStyle(.menu)
                 .frame(width: 80)
             }
-            .onChange(of: sortBy) { _, _ in resort() }
-            .onChange(of: filter) { _, _ in resort() }
-            .onChange(of: search) { _, _ in resort() }
+            .onChange(of: sortBy) { resort() }
+            .onChange(of: filter) { resort() }
+            .onChange(of: search) { resort() }
             .onAppear { resort() }
 
             // Column header
@@ -399,10 +390,10 @@ struct AppSection: View {
                             subProcRow(proc)
                         }
                     } label: {
-                        appRow(app)
+                        appRow(app, peak: peak)
                     }
                 } else if let proc = app.procs.first {
-                    flatRow(proc)
+                    flatRow(proc, peak: peak)
                 }
             }
         }
@@ -424,7 +415,7 @@ struct AppSection: View {
 
     // MARK: - Rows
 
-    private func appRow(_ app: AppUsage) -> some View {
+    private func appRow(_ app: AppUsage, peak: Double) -> some View {
         procGrid(
             name: Text(app.id).fontWeight(.medium).lineLimit(1).truncationMode(.tail),
             power: energyText(app.totalEnergyW, available: app.hasEnergy),
@@ -439,7 +430,7 @@ struct AppSection: View {
             GeometryReader { geo in
                 RoundedRectangle(cornerRadius: 3)
                     .fill(.orange.opacity(0.06))
-                    .frame(width: geo.size.width * min(app.totalEnergyW / max(peak, 0.001), 1))
+                    .frame(width: geo.size.width * min(app.totalEnergyW / peak, 1))
             }
         }
     }
@@ -457,7 +448,7 @@ struct AppSection: View {
         .padding(.horizontal, 4)
     }
 
-    private func flatRow(_ proc: ProcUsage) -> some View {
+    private func flatRow(_ proc: ProcUsage, peak: Double) -> some View {
         procGrid(
             name: Text(proc.name).lineLimit(1).truncationMode(.middle),
             power: energyText(proc.energyW, available: proc.hasEnergy),
@@ -472,7 +463,7 @@ struct AppSection: View {
             GeometryReader { geo in
                 RoundedRectangle(cornerRadius: 3)
                     .fill(.orange.opacity(0.06))
-                    .frame(width: geo.size.width * min(proc.energyW / max(peak, 0.001), 1))
+                    .frame(width: geo.size.width * min(proc.energyW / peak, 1))
             }
         }
     }

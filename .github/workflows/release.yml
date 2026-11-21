@@ -40,31 +40,26 @@ jobs:
             --title "v${VERSION}" \
             --generate-notes
 
-      # brew bump-cask-pr is Homebrew's canonical cask bumper — preserves
-      # #{version} interpolation in the url stanza (unlike mislav's JS action,
-      # which parses the cask as plain text). --write-only --commit makes it
-      # commit locally without opening a PR; we push the commit ourselves.
-      - uses: Homebrew/actions/setup-homebrew@main
-      - name: Bump homebrew cask
-        env:
-          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
-          HOMEBREW_NO_INSTALL_FROM_API: "1"
+      # This repo is its own Homebrew tap: the cask lives in Casks/wtop.rb on master and
+      # points at the release asset just uploaded. Only the version and sha256 lines are
+      # rewritten, so the `v#{version}` interpolation in the url stanza stays intact.
+      - name: Bump cask
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           SHA="${{ steps.sha.outputs.sha256 }}"
 
-          brew tap abizer/homebrew-tap
-          tap_repo="$(brew --repository abizer/homebrew-tap)"
-          cd "$tap_repo"
-          git remote set-url origin "https://x-access-token:${TAP_TOKEN}@github.com/abizer/homebrew-tap.git"
+          git fetch origin master
+          git checkout -B master origin/master
+          sed -i '' -E \
+            -e "s/^  version \".*\"/  version \"${VERSION}\"/" \
+            -e "s/^  sha256 \".*\"/  sha256 \"${SHA}\"/" \
+            Casks/wtop.rb
+          if git diff --quiet; then
+            echo "Cask already at ${VERSION}"
+            exit 0
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          brew bump-cask-pr \
-            --write-only --commit \
-            --no-audit --no-style \
-            --version="${VERSION}" \
-            --sha256="${SHA}" \
-            abizer/tap/wtop
-
-          git push origin HEAD:master
+          git commit -am "cask: wtop ${VERSION}"
+          git push origin master

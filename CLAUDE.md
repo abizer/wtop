@@ -17,7 +17,8 @@ just clean            # rm -rf .build wtop.app
 
 Homebrew:
 ```bash
-brew install --cask abizer/tap/wtop
+brew tap abizer/wtop https://github.com/abizer/wtop && brew trust abizer/wtop
+brew install --cask abizer/wtop/wtop
 ```
 
 ## Architecture
@@ -75,7 +76,7 @@ Every tick the Sampler asks `HelperClient.processes()`; on nil it falls back to 
 
 ### Homebrew cask (pre-built binary)
 
-CI builds `.app` on macOS arm64, uploads to GitHub Releases. Cask downloads and installs.
+This repo is its own tap: the cask is `Casks/wtop.rb` on master. Because the repo isn't named `homebrew-*`, `brew tap` needs the URL. CI builds `.app` on macOS arm64, uploads to GitHub Releases. Cask downloads and installs.
 
 **Cask postflight:**
 1. `xattr -r -d com.apple.quarantine` (app is ad-hoc signed, not notarized)
@@ -88,11 +89,11 @@ CI builds `.app` on macOS arm64, uploads to GitHub Releases. Cask downloads and 
 ```
 git tag v0.5.0 && git push --tags
   → CI: build .app → zip → GitHub Release
-  → CI: update Casks/wtop.rb in homebrew-tap (version + sha256)
+  → CI: rewrite version + sha256 in Casks/wtop.rb, commit "cask: wtop 0.5.0" to master
   → Users: brew upgrade --cask wtop
 ```
 
-Requires `TAP_TOKEN` secret (fine-grained PAT with `contents:write` + `pull-requests:write` on `abizer/homebrew-tap`).
+No extra secrets: the bump is a `sed` plus a push with the workflow's own `GITHUB_TOKEN` (`contents: write`). It deliberately doesn't use `brew bump-cask-pr` — Homebrew 7 refuses to load a cask from an untrusted tap, which is what broke the v0.5.0 bump to the old `abizer/homebrew-tap`.
 
 ### justfile `release` recipe
 

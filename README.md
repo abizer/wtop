@@ -13,10 +13,12 @@ Real-time power monitor for Apple Silicon Macs. Native SwiftUI app that shows ex
 ### Homebrew (recommended)
 
 ```bash
-brew install --cask abizer/tap/wtop
+brew tap abizer/wtop https://github.com/abizer/wtop
+brew trust abizer/wtop        # newer Homebrew asks you to trust third-party taps
+brew install --cask abizer/wtop/wtop
 ```
 
-The cask downloads a pre-built `.app`, installs it to `/Applications`, strips the quarantine attribute, and sets up the privileged helper daemon (prompts for your password once).
+This repository is its own tap (the cask is [`Casks/wtop.rb`](Casks/wtop.rb)), which is why `brew tap` needs the URL. The cask downloads a pre-built `.app`, installs it to `/Applications`, strips the quarantine attribute, and sets up the privileged helper daemon (prompts for your password once).
 
 ## Features
 

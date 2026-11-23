@@ -54,7 +54,7 @@ struct PowerSection: View {
             if history.count > 2 {
                 Sparkline(values: history, color: .orange)
                     .frame(height: 36)
-                    .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                    .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
 
             // Status row: thermal + temps + battery time
@@ -127,7 +127,7 @@ struct PowerCard: View {
         }
         .frame(maxWidth: .infinity, minHeight: 56)
         .padding(.vertical, 10)
-        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .help(help)
         .accessibilityElement(children: .combine)
     }

@@ -7,6 +7,11 @@ set positional-arguments
 clt := "/Library/Developer/CommandLineTools"
 on_clt := `[ "$(xcode-select -p 2>/dev/null)" = /Library/Developer/CommandLineTools ] && echo true || echo false`
 export SDKROOT := if on_clt == "true" { if path_exists(clt / "SDKs/MacOSX26.sdk") == "true" { clt / "SDKs/MacOSX26.sdk" } else { clt / "SDKs/MacOSX.sdk" } } else { `xcrun --show-sdk-path` }
+# The CLT linker also stamps the binary with the deployment target (14.0) as its SDK
+# version instead of the SDK it was built with. macOS picks an app's look from that stamp,
+# so without the real one a local build renders in the pre-Liquid Glass style.
+sdk_version := `plutil -extract Version raw /Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk/SDKSettings.json 2>/dev/null || echo 26.0`
+export WTOP_BUILD_FLAGS := if on_clt == "true" { "-Xlinker -platform_version -Xlinker macos -Xlinker 14.0 -Xlinker " + sdk_version } else { "" }
 test_flags := if on_clt == "true" { "-Xswiftc -plugin-path -Xswiftc " + clt / "usr/lib/swift/host/plugins/testing" } else { "" }
 
 # Version of the last release tag, e.g. 0.4.4
@@ -16,11 +21,11 @@ default: build
 
 # Build both app and helper
 build:
-    swift build -c release --disable-sandbox
+    swift build -c release --disable-sandbox {{WTOP_BUILD_FLAGS}}
 
 # Build debug
 build-debug:
-    swift build
+    swift build {{WTOP_BUILD_FLAGS}}
 
 # Run the test suite (the sampler tests pin a core for a few seconds)
 test:
@@ -58,7 +63,7 @@ uninstall: uninstall-helper
 
 # Run debug build
 run:
-    swift build && .build/debug/wtop
+    swift build {{WTOP_BUILD_FLAGS}} && .build/debug/wtop
 
 # Tag and push — CI builds the .app, publishes the release and bumps the cask
 release new_version: test

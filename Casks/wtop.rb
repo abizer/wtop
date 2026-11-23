@@ -1,6 +1,6 @@
 cask "wtop" do
-  version "0.5.0"
-  sha256 "ff6c09f8673723ce3bde8ed3b049335dba32c4a5566a62033ab4ac94733be16c"
+  version "0.5.1"
+  sha256 "05f49334965227d82544b17a5b4b5dab61980569555d2ced23aafe5f47d94b8a"
 
   url "https://github.com/abizer/wtop/releases/download/v#{version}/wtop.app.zip"
   name "wtop"

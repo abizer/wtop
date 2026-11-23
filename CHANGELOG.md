@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.5.1
 
 - **Liquid Glass.** The hand-rolled header is now a standard window toolbar: on macOS 26 and later the helper badge and refresh picker sit in glass capsules and the content scrolls beneath them. The machine summary moved to the window subtitle. macOS 14 and 15 get the same toolbar in the classic style.
 
